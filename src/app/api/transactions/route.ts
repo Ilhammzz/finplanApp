@@ -1,31 +1,33 @@
 // ============================================
 // Transaction API Route - POST (create with balance adjustment)
-// Equivalent: TransactionService with @Transactional in Spring Boot
-//
-// Business Logic:
-//   INCOME  -> Add amount to wallet balance
-//   EXPENSE -> Deduct amount from wallet balance
-//   Throws if wallet not found or insufficient balance for EXPENSE
+// Scoped to authenticated user
 // ============================================
 
 import { NextRequest } from "next/server"
 import { db } from "@/lib/db"
 import { createTransactionSchema, toTransactionResponse } from "@/lib/validations"
 import { handleError, successResponse, NotFoundError, InsufficientBalanceError } from "@/lib/api-utils"
-import { Prisma } from "@prisma/client"
+import { requireAuth } from "@/lib/auth-helpers"
 
-// POST /api/transactions - Create a transaction (with balance adjustment)
+// POST /api/transactions - Create a transaction
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if ("json" in auth) return auth
+
     const body = await request.json()
     const validated = createTransactionSchema.parse(body)
 
-    // Verify wallet exists
-    const wallet = await db.wallet.findUnique({ where: { id: validated.walletId } })
+    // Verify wallet belongs to user
+    const wallet = await db.wallet.findFirst({
+      where: { id: validated.walletId, userId: auth.id },
+    })
     if (!wallet) throw new NotFoundError("Wallet", validated.walletId)
 
-    // Verify category exists and type matches
-    const category = await db.category.findUnique({ where: { id: validated.categoryId } })
+    // Verify category belongs to user and type matches
+    const category = await db.category.findFirst({
+      where: { id: validated.categoryId, userId: auth.id },
+    })
     if (!category) throw new NotFoundError("Category", validated.categoryId)
 
     if (category.type !== validated.type) {
@@ -41,9 +43,8 @@ export async function POST(request: NextRequest) {
       throw new InsufficientBalanceError(wallet.name, wallet.balance, validated.amount)
     }
 
-    // Execute transaction + balance update atomically (equivalent to @Transactional)
+    // Execute transaction + balance update atomically
     const transaction = await db.$transaction(async (tx) => {
-      // Create the transaction record
       const newTx = await tx.transaction.create({
         data: {
           amount: validated.amount,
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
           transactionDate: validated.transactionDate,
           walletId: validated.walletId,
           categoryId: validated.categoryId,
+          userId: auth.id,
         },
         include: {
           wallet: { select: { id: true, name: true } },
@@ -59,7 +61,6 @@ export async function POST(request: NextRequest) {
         },
       })
 
-      // Update wallet balance
       const balanceChange = validated.type === "INCOME" ? validated.amount : -validated.amount
       await tx.wallet.update({
         where: { id: validated.walletId },

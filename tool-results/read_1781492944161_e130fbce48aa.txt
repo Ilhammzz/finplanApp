@@ -1,0 +1,1119 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback } from "react"
+     4→     4→import {
+     5→     5→  Wallet, Plus, Pencil, Trash2, TrendingUp, TrendingDown,
+     6→     6→  DollarSign, ArrowUpRight, ArrowDownRight, CalendarDays,
+     7→     7→  UtensilsCrossed, Car, ShoppingBag, Gamepad2, Receipt, Heart,
+     8→     8→  GraduationCap, Home as HomeIcon, Shield, MoreHorizontal, Briefcase, Laptop,
+     9→     9→  Gift, CircleDollarSign, Tag, LayoutDashboard, WalletIcon,
+    10→    10→  Loader2, CirclePlus
+    11→    11→} from "lucide-react"
+    12→    12→
+    13→    13→import { walletApi, categoryApi, transactionApi, dashboardApi } from "@/lib/api"
+    14→    14→import type { WalletResponse, CategoryResponse, TransactionResponse, DashboardSummary } from "@/lib/validations"
+    15→    15→
+    16→    16→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+    17→    17→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+    18→    18→import { Button } from "@/components/ui/button"
+    19→    19→import { Input } from "@/components/ui/input"
+    20→    20→import { Label } from "@/components/ui/label"
+    21→    21→import { Badge } from "@/components/ui/badge"
+    22→    22→import { Separator } from "@/components/ui/separator"
+    23→    23→import {
+    24→    24→  Dialog, DialogContent, DialogDescription, DialogFooter,
+    25→    25→  DialogHeader, DialogTitle, DialogTrigger,
+    26→    26→} from "@/components/ui/dialog"
+    27→    27→import {
+    28→    28→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    29→    29→} from "@/components/ui/select"
+    30→    30→import { Calendar } from "@/components/ui/calendar"
+    31→    31→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+    32→    32→import { useToast } from "@/hooks/use-toast"
+    33→    33→import { format } from "date-fns"
+    34→    34→
+    35→    35→// --- Icon mapping ---
+    36→    36→const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+    37→    37→  UtensilsCrossed, Car, ShoppingBag, Gamepad2, Receipt, Heart,
+    38→    38→  GraduationCap, Home: HomeIcon, Shield, MoreHorizontal, Briefcase, Laptop,
+    39→    39→  Gift, TrendingUp, DollarSign, CircleDollarSign, Tag,
+    40→    40→}
+    41→    41→
+    42→    42→function getIcon(iconName: string | null) {
+    43→    43→  if (!iconName) return Tag
+    44→    44→  return iconMap[iconName] || Tag
+    45→    45→}
+    46→    46→
+    47→    47→// --- Currency formatter (Indonesian Rupiah) ---
+    48→    48→function formatCurrency(amount: number) {
+    49→    49→  return new Intl.NumberFormat("id-ID", {
+    50→    50→    style: "currency",
+    51→    51→    currency: "IDR",
+    52→    52→    minimumFractionDigits: 0,
+    53→    53→    maximumFractionDigits: 0,
+    54→    54→  }).format(amount)
+    55→    55→}
+    56→    56→
+    57→    57→// --- Type for wallet with transaction count ---
+    58→    58→type WalletWithCount = WalletResponse & { transactionCount: number }
+    59→    59→type CategoryWithCount = CategoryResponse & { transactionCount: number }
+    60→    60→
+    61→    61→// ============================================================
+    62→    62→// MAIN PAGE COMPONENT
+    63→    63→// ============================================================
+    64→    64→export default function Home() {
+    65→    65→  const { toast } = useToast()
+    66→    66→
+    67→    67→  // --- Data state ---
+    68→    68→  const [wallets, setWallets] = useState<WalletWithCount[]>([])
+    69→    69→  const [incomeCategories, setIncomeCategories] = useState<CategoryWithCount[]>([])
+    70→    70→  const [expenseCategories, setExpenseCategories] = useState<CategoryWithCount[]>([])
+    71→    71→  const [recentTransactions, setRecentTransactions] = useState<TransactionResponse[]>([])
+    72→    72→  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+    73→    73→
+    74→    74→  // --- Loading state ---
+    75→    75→  const [loading, setLoading] = useState(true)
+    76→    76→
+    77→    77→  // --- Dialog states ---
+    78→    78→  const [addWalletOpen, setAddWalletOpen] = useState(false)
+    79→    79→  const [editWalletOpen, setEditWalletOpen] = useState(false)
+    80→    80→  const [addIncomeCatOpen, setAddIncomeCatOpen] = useState(false)
+    81→    81→  const [addExpenseCatOpen, setAddExpenseCatOpen] = useState(false)
+    82→    82→  const [editCategoryOpen, setEditCategoryOpen] = useState(false)
+    83→    83→  const [addTransactionOpen, setAddTransactionOpen] = useState(false)
+    84→    84→
+    85→    85→  // --- Form states ---
+    86→    86→  const [walletName, setWalletName] = useState("")
+    87→    87→  const [walletBalance, setWalletBalance] = useState("")
+    88→    88→  const [editingWallet, setEditingWallet] = useState<WalletWithCount | null>(null)
+    89→    89→  const [editWalletName, setEditWalletName] = useState("")
+    90→    90→
+    91→    91→  const [catName, setCatName] = useState("")
+    92→    92→  const [catIcon, setCatIcon] = useState("")
+    93→    93→  const [editingCategory, setEditingCategory] = useState<CategoryWithCount | null>(null)
+    94→    94→  const [editCatName, setEditCatName] = useState("")
+    95→    95→  const [editCatIcon, setEditCatIcon] = useState("")
+    96→    96→
+    97→    97→  const [txType, setTxType] = useState<"INCOME" | "EXPENSE">("EXPENSE")
+    98→    98→  const [txAmount, setTxAmount] = useState("")
+    99→    99→  const [txWalletId, setTxWalletId] = useState("")
+   100→   100→  const [txCategoryId, setTxCategoryId] = useState("")
+   101→   101→  const [txDate, setTxDate] = useState<Date>(new Date())
+   102→   102→  const [txDescription, setTxDescription] = useState("")
+   103→   103→
+   104→   104→  const [submitting, setSubmitting] = useState(false)
+   105→   105→
+   106→   106→  // --- Fetch functions ---
+   107→   107→  const fetchWallets = useCallback(async () => {
+   108→   108→    try {
+   109→   109→      const data = await walletApi.list()
+   110→   110→      setWallets(data)
+   111→   111→    } catch {
+   112→   112→      // silent
+   113→   113→    }
+   114→   114→  }, [])
+   115→   115→
+   116→   116→  const fetchCategories = useCallback(async () => {
+   117→   117→    try {
+   118→   118→      const [income, expense] = await Promise.all([
+   119→   119→        categoryApi.list("INCOME"),
+   120→   120→        categoryApi.list("EXPENSE"),
+   121→   121→      ])
+   122→   122→      setIncomeCategories(income)
+   123→   123→      setExpenseCategories(expense)
+   124→   124→    } catch {
+   125→   125→      // silent
+   126→   126→    }
+   127→   127→  }, [])
+   128→   128→
+   129→   129→  const fetchDashboard = useCallback(async () => {
+   130→   130→    try {
+   131→   131→      const summary = await dashboardApi.summary()
+   132→   132→      setDashboardSummary(summary)
+   133→   133→    } catch {
+   134→   134→      // silent
+   135→   135→    }
+   136→   136→  }, [])
+   137→   137→
+   138→   138→  const fetchRecentTransactions = useCallback(async () => {
+   139→   139→    try {
+   140→   140→      const result = await dashboardApi.search({ page: "1", pageSize: "5" })
+   141→   141→      setRecentTransactions(result.data)
+   142→   142→    } catch {
+   143→   143→      // silent
+   144→   144→    }
+   145→   145→  }, [])
+   146→   146→
+   147→   147→  const refreshAll = useCallback(async () => {
+   148→   148→    setLoading(true)
+   149→   149→    await Promise.all([
+   150→   150→      fetchWallets(),
+   151→   151→      fetchCategories(),
+   152→   152→      fetchDashboard(),
+   153→   153→      fetchRecentTransactions(),
+   154→   154→    ])
+   155→   155→    setLoading(false)
+   156→   156→  }, [fetchWallets, fetchCategories, fetchDashboard, fetchRecentTransactions])
+   157→   157→
+   158→   158→  useEffect(() => {
+   159→   159→    refreshAll()
+   160→   160→  }, [refreshAll])
+   161→   161→
+   162→   162→  // --- Wallet handlers ---
+   163→   163→  const handleCreateWallet = async () => {
+   164→   164→    if (!walletName.trim()) return
+   165→   165→    setSubmitting(true)
+   166→   166→    try {
+   167→   167→      await walletApi.create({ name: walletName.trim(), balance: walletBalance ? parseFloat(walletBalance) : 0 })
+   168→   168→      toast({ title: "Wallet created", description: `"${walletName}" has been added.` })
+   169→   169→      setWalletName("")
+   170→   170→      setWalletBalance("")
+   171→   171→      setAddWalletOpen(false)
+   172→   172→      await refreshAll()
+   173→   173→    } catch (err: unknown) {
+   174→   174→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create wallet", variant: "destructive" })
+   175→   175→    } finally {
+   176→   176→      setSubmitting(false)
+   177→   177→    }
+   178→   178→  }
+   179→   179→
+   180→   180→  const handleUpdateWallet = async () => {
+   181→   181→    if (!editingWallet || !editWalletName.trim()) return
+   182→   182→    setSubmitting(true)
+   183→   183→    try {
+   184→   184→      await walletApi.update(editingWallet.id, { name: editWalletName.trim() })
+   185→   185→      toast({ title: "Wallet updated", description: `Wallet renamed to "${editWalletName}".` })
+   186→   186→      setEditWalletOpen(false)
+   187→   187→      setEditingWallet(null)
+   188→   188→      await refreshAll()
+   189→   189→    } catch (err: unknown) {
+   190→   190→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update wallet", variant: "destructive" })
+   191→   191→    } finally {
+   192→   192→      setSubmitting(false)
+   193→   193→    }
+   194→   194→  }
+   195→   195→
+   196→   196→  const handleDeleteWallet = async (id: string, name: string) => {
+   197→   197→    try {
+   198→   198→      await walletApi.delete(id)
+   199→   199→      toast({ title: "Wallet deleted", description: `"${name}" has been removed.` })
+   200→   200→      await refreshAll()
+   201→   201→    } catch (err: unknown) {
+   202→   202→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete wallet", variant: "destructive" })
+   203→   203→    }
+   204→   204→  }
+   205→   205→
+   206→   206→  // --- Category handlers ---
+   207→   207→  const handleCreateCategory = async (type: "INCOME" | "EXPENSE") => {
+   208→   208→    if (!catName.trim()) return
+   209→   209→    setSubmitting(true)
+   210→   210→    try {
+   211→   211→      await categoryApi.create({ name: catName.trim(), type, icon: catIcon.trim() || undefined })
+   212→   212→      toast({ title: "Category created", description: `"${catName}" has been added.` })
+   213→   213→      setCatName("")
+   214→   214→      setCatIcon("")
+   215→   215→      if (type === "INCOME") setAddIncomeCatOpen(false)
+   216→   216→      else setAddExpenseCatOpen(false)
+   217→   217→      await refreshAll()
+   218→   218→    } catch (err: unknown) {
+   219→   219→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create category", variant: "destructive" })
+   220→   220→    } finally {
+   221→   221→      setSubmitting(false)
+   222→   222→    }
+   223→   223→  }
+   224→   224→
+   225→   225→  const handleUpdateCategory = async () => {
+   226→   226→    if (!editingCategory) return
+   227→   227→    setSubmitting(true)
+   228→   228→    try {
+   229→   229→      await categoryApi.update(editingCategory.id, {
+   230→   230→        name: editCatName.trim() || undefined,
+   231→   231→        icon: editCatIcon.trim() || undefined,
+   232→   232→      })
+   233→   233→      toast({ title: "Category updated", description: `"${editCatName}" has been updated.` })
+   234→   234→      setEditCategoryOpen(false)
+   235→   235→      setEditingCategory(null)
+   236→   236→      await refreshAll()
+   237→   237→    } catch (err: unknown) {
+   238→   238→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update category", variant: "destructive" })
+   239→   239→    } finally {
+   240→   240→      setSubmitting(false)
+   241→   241→    }
+   242→   242→  }
+   243→   243→
+   244→   244→  const handleDeleteCategory = async (id: string, name: string) => {
+   245→   245→    try {
+   246→   246→      await categoryApi.delete(id)
+   247→   247→      toast({ title: "Category deleted", description: `"${name}" has been removed.` })
+   248→   248→      await refreshAll()
+   249→   249→    } catch (err: unknown) {
+   250→   250→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete category", variant: "destructive" })
+   251→   251→    }
+   252→   252→  }
+   253→   253→
+   254→   254→  // --- Transaction handler ---
+   255→   255→  const handleCreateTransaction = async () => {
+   256→   256→    if (!txAmount || !txWalletId || !txCategoryId || !txDate) return
+   257→   257→    setSubmitting(true)
+   258→   258→    try {
+   259→   259→      await transactionApi.create({
+   260→   260→        amount: parseFloat(txAmount),
+   261→   261→        type: txType,
+   262→   262→        description: txDescription.trim() || undefined,
+   263→   263→        transactionDate: format(txDate, "yyyy-MM-dd"),
+   264→   264→        walletId: txWalletId,
+   265→   265→        categoryId: txCategoryId,
+   266→   266→      })
+   267→   267→      toast({
+   268→   268→        title: "Transaction added",
+   269→   269→        description: `${txType === "INCOME" ? "Income" : "Expense"} of ${formatCurrency(parseFloat(txAmount))} recorded.`,
+   270→   270→      })
+   271→   271→      setTxType("EXPENSE")
+   272→   272→      setTxAmount("")
+   273→   273→      setTxWalletId("")
+   274→   274→      setTxCategoryId("")
+   275→   275→      setTxDate(new Date())
+   276→   276→      setTxDescription("")
+   277→   277→      setAddTransactionOpen(false)
+   278→   278→      await refreshAll()
+   279→   279→    } catch (err: unknown) {
+   280→   280→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create transaction", variant: "destructive" })
+   281→   281→    } finally {
+   282→   282→      setSubmitting(false)
+   283→   283→    }
+   284→   284→  }
+   285→   285→
+   286→   286→  // --- Available icon names for category creation ---
+   287→   287→  const availableIcons = [
+   288→   288→    "UtensilsCrossed", "Car", "ShoppingBag", "Gamepad2", "Receipt",
+   289→   289→    "Heart", "GraduationCap", "Home", "Shield", "MoreHorizontal",
+   290→   290→    "Briefcase", "Laptop", "Gift", "TrendingUp", "DollarSign",
+   291→   291→    "CircleDollarSign", "Tag",
+   292→   292→  ]
+   293→   293→
+   294→   294→  // ============================================================
+   295→   295→  // RENDER
+   296→   296→  // ============================================================
+   297→   297→  return (
+   298→   298→    <div className="min-h-screen flex flex-col bg-background">
+   299→   299→      {/* ===== HEADER ===== */}
+   300→   300→      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+   301→   301→        <div className="container mx-auto flex h-14 items-center px-4 sm:px-6">
+   302→   302→          <div className="flex items-center gap-2">
+   303→   303→            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
+   304→   304→              <Wallet className="h-4 w-4" />
+   305→   305→            </div>
+   306→   306→            <h1 className="text-lg font-bold tracking-tight">Finance Tracker</h1>
+   307→   307→          </div>
+   308→   308→        </div>
+   309→   309→      </header>
+   310→   310→
+   311→   311→      {/* ===== MAIN CONTENT ===== */}
+   312→   312→      <main className="flex-1 container mx-auto px-4 sm:px-6 py-6">
+   313→   313→        <Tabs defaultValue="dashboard" className="w-full">
+   314→   314→          <TabsList className="grid w-full grid-cols-3 mb-6">
+   315→   315→            <TabsTrigger value="dashboard" className="gap-1.5">
+   316→   316→              <LayoutDashboard className="h-4 w-4 hidden sm:block" />
+   317→   317→              Dashboard
+   318→   318→            </TabsTrigger>
+   319→   319→            <TabsTrigger value="wallets" className="gap-1.5">
+   320→   320→              <WalletIcon className="h-4 w-4 hidden sm:block" />
+   321→   321→              Wallets
+   322→   322→            </TabsTrigger>
+   323→   323→            <TabsTrigger value="categories" className="gap-1.5">
+   324→   324→              <Tag className="h-4 w-4 hidden sm:block" />
+   325→   325→              Categories
+   326→   326→            </TabsTrigger>
+   327→   327→          </TabsList>
+   328→   328→
+   329→   329→          {/* ========== DASHBOARD TAB ========== */}
+   330→   330→          <TabsContent value="dashboard" className="space-y-6">
+   331→   331→            {loading ? (
+   332→   332→              <div className="flex items-center justify-center py-20">
+   333→   333→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+   334→   334→              </div>
+   335→   335→            ) : (
+   336→   336→              <>
+   337→   337→                {/* Summary Cards */}
+   338→   338→                <div className="grid gap-4 sm:grid-cols-3">
+   339→   339→                  {/* Total Balance */}
+   340→   340→                  <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+   341→   341→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   342→   342→                      <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-400">
+   343→   343→                        Total Balance
+   344→   344→                      </CardTitle>
+   345→   345→                      <DollarSign className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+   346→   346→                    </CardHeader>
+   347→   347→                    <CardContent>
+   348→   348→                      <div className="text-2xl font-bold text-amber-900 dark:text-amber-200">
+   349→   349→                        {formatCurrency(dashboardSummary?.netBalance ?? 0)}
+   350→   350→                      </div>
+   351→   351→                      <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mt-1">
+   352→   352→                        Across {dashboardSummary?.walletCount ?? 0} wallet{dashboardSummary?.walletCount !== 1 ? "s" : ""}
+   353→   353→                      </p>
+   354→   354→                    </CardContent>
+   355→   355→                  </Card>
+   356→   356→
+   357→   357→                  {/* Total Income */}
+   358→   358→                  <Card className="border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20">
+   359→   359→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   360→   360→                      <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+   361→   361→                        Total Income
+   362→   362→                      </CardTitle>
+   363→   363→                      <ArrowUpRight className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+   364→   364→                    </CardHeader>
+   365→   365→                    <CardContent>
+   366→   366→                      <div className="text-2xl font-bold text-emerald-900 dark:text-emerald-200">
+   367→   367→                        {formatCurrency(dashboardSummary?.totalIncome ?? 0)}
+   368→   368→                      </div>
+   369→   369→                      <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70 mt-1">
+   370→   370→                        All time income
+   371→   371→                      </p>
+   372→   372→                    </CardContent>
+   373→   373→                  </Card>
+   374→   374→
+   375→   375→                  {/* Total Expense */}
+   376→   376→                  <Card className="border-rose-200 bg-rose-50/50 dark:border-rose-900 dark:bg-rose-950/20">
+   377→   377→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   378→   378→                      <CardTitle className="text-sm font-medium text-rose-700 dark:text-rose-400">
+   379→   379→                        Total Expense
+   380→   380→                      </CardTitle>
+   381→   381→                      <ArrowDownRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+   382→   382→                    </CardHeader>
+   383→   383→                    <CardContent>
+   384→   384→                      <div className="text-2xl font-bold text-rose-900 dark:text-rose-200">
+   385→   385→                        {formatCurrency(dashboardSummary?.totalExpense ?? 0)}
+   386→   386→                      </div>
+   387→   387→                      <p className="text-xs text-rose-600/70 dark:text-rose-400/70 mt-1">
+   388→   388→                        All time expenses
+   389→   389→                      </p>
+   390→   390→                    </CardContent>
+   391→   391→                  </Card>
+   392→   392→                </div>
+   393→   393→
+   394→   394→                {/* Quick Add Transaction + Recent Transactions */}
+   395→   395→                <div className="flex items-center justify-between">
+   396→   396→                  <h2 className="text-lg font-semibold">Recent Transactions</h2>
+   397→   397→                  <Dialog open={addTransactionOpen} onOpenChange={setAddTransactionOpen}>
+   398→   398→                    <DialogTrigger asChild>
+   399→   399→                      <Button className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+   400→   400→                        <CirclePlus className="h-4 w-4" />
+   401→   401→                        Add Transaction
+   402→   402→                      </Button>
+   403→   403→                    </DialogTrigger>
+   404→   404→                    <DialogContent className="sm:max-w-[480px]">
+   405→   405→                      <DialogHeader>
+   406→   406→                        <DialogTitle>Add Transaction</DialogTitle>
+   407→   407→                        <DialogDescription>Record a new income or expense transaction.</DialogDescription>
+   408→   408→                      </DialogHeader>
+   409→   409→                      <div className="grid gap-4 py-4">
+   410→   410→                        {/* Type Toggle */}
+   411→   411→                        <div className="grid gap-2">
+   412→   412→                          <Label>Type</Label>
+   413→   413→                          <div className="flex gap-2">
+   414→   414→                            <Button
+   415→   415→                              type="button"
+   416→   416→                              variant={txType === "INCOME" ? "default" : "outline"}
+   417→   417→                              className={txType === "INCOME" ? "bg-emerald-600 hover:bg-emerald-700 flex-1" : "flex-1"}
+   418→   418→                              onClick={() => { setTxType("INCOME"); setTxCategoryId("") }}
+   419→   419→                            >
+   420→   420→                              <TrendingUp className="h-4 w-4 mr-1.5" />
+   421→   421→                              Income
+   422→   422→                            </Button>
+   423→   423→                            <Button
+   424→   424→                              type="button"
+   425→   425→                              variant={txType === "EXPENSE" ? "default" : "outline"}
+   426→   426→                              className={txType === "EXPENSE" ? "bg-rose-600 hover:bg-rose-700 flex-1" : "flex-1"}
+   427→   427→                              onClick={() => { setTxType("EXPENSE"); setTxCategoryId("") }}
+   428→   428→                            >
+   429→   429→                              <TrendingDown className="h-4 w-4 mr-1.5" />
+   430→   430→                              Expense
+   431→   431→                            </Button>
+   432→   432→                          </div>
+   433→   433→                        </div>
+   434→   434→
+   435→   435→                        {/* Amount */}
+   436→   436→                        <div className="grid gap-2">
+   437→   437→                          <Label htmlFor="tx-amount">Amount</Label>
+   438→   438→                          <div className="relative">
+   439→   439→                            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   440→   440→                            <Input
+   441→   441→                              id="tx-amount"
+   442→   442→                              type="number"
+   443→   443→                              step="0.01"
+   444→   444→                              min="0"
+   445→   445→                              placeholder="0.00"
+   446→   446→                              className="pl-9"
+   447→   447→                              value={txAmount}
+   448→   448→                              onChange={(e) => setTxAmount(e.target.value)}
+   449→   449→                            />
+   450→   450→                          </div>
+   451→   451→                        </div>
+   452→   452→
+   453→   453→                        {/* Wallet Selector */}
+   454→   454→                        <div className="grid gap-2">
+   455→   455→                          <Label>Wallet</Label>
+   456→   456→                          <Select value={txWalletId} onValueChange={setTxWalletId}>
+   457→   457→                            <SelectTrigger>
+   458→   458→                              <SelectValue placeholder="Select a wallet" />
+   459→   459→                            </SelectTrigger>
+   460→   460→                            <SelectContent>
+   461→   461→                              {wallets.length === 0 ? (
+   462→   462→                                <div className="px-2 py-1.5 text-sm text-muted-foreground">No wallets available</div>
+   463→   463→                              ) : (
+   464→   464→                                wallets.map((w) => (
+   465→   465→                                  <SelectItem key={w.id} value={w.id}>
+   466→   466→                                    {w.name} ({formatCurrency(w.balance)})
+   467→   467→                                  </SelectItem>
+   468→   468→                                ))
+   469→   469→                              )}
+   470→   470→                            </SelectContent>
+   471→   471→                          </Select>
+   472→   472→                        </div>
+   473→   473→
+   474→   474→                        {/* Category Selector */}
+   475→   475→                        <div className="grid gap-2">
+   476→   476→                          <Label>Category</Label>
+   477→   477→                          <Select value={txCategoryId} onValueChange={setTxCategoryId}>
+   478→   478→                            <SelectTrigger>
+   479→   479→                              <SelectValue placeholder="Select a category" />
+   480→   480→                            </SelectTrigger>
+   481→   481→                            <SelectContent>
+   482→   482→                              {(txType === "INCOME" ? incomeCategories : expenseCategories).length === 0 ? (
+   483→   483→                                <div className="px-2 py-1.5 text-sm text-muted-foreground">
+   484→   484→                                  No {txType.toLowerCase()} categories available
+   485→   485→                                </div>
+   486→   486→                              ) : (
+   487→   487→                                (txType === "INCOME" ? incomeCategories : expenseCategories).map((c) => {
+   488→   488→                                  const IconComp = getIcon(c.icon)
+   489→   489→                                  return (
+   490→   490→                                    <SelectItem key={c.id} value={c.id}>
+   491→   491→                                      <span className="flex items-center gap-2">
+   492→   492→                                        <IconComp className="h-3.5 w-3.5" />
+   493→   493→                                        {c.name}
+   494→   494→                                      </span>
+   495→   495→                                    </SelectItem>
+   496→   496→                                  )
+   497→   497→                                })
+   498→   498→                              )}
+   499→   499→                            </SelectContent>
+   500→   500→                          </Select>
+   501→   501→                        </div>
+   502→   502→
+   503→   503→                        {/* Date Picker */}
+   504→   504→                        <div className="grid gap-2">
+   505→   505→                          <Label>Date</Label>
+   506→   506→                          <Popover>
+   507→   507→                            <PopoverTrigger asChild>
+   508→   508→                              <Button
+   509→   509→                                variant="outline"
+   510→   510→                                className="justify-start text-left font-normal"
+   511→   511→                              >
+   512→   512→                                <CalendarDays className="mr-2 h-4 w-4" />
+   513→   513→                                {txDate ? format(txDate, "PPP") : "Pick a date"}
+   514→   514→                              </Button>
+   515→   515→                            </PopoverTrigger>
+   516→   516→                            <PopoverContent className="w-auto p-0" align="start">
+   517→   517→                              <Calendar
+   518→   518→                                mode="single"
+   519→   519→                                selected={txDate}
+   520→   520→                                onSelect={(d) => d && setTxDate(d)}
+   521→   521→                                initialFocus
+   522→   522→                              />
+   523→   523→                            </PopoverContent>
+   524→   524→                          </Popover>
+   525→   525→                        </div>
+   526→   526→
+   527→   527→                        {/* Description */}
+   528→   528→                        <div className="grid gap-2">
+   529→   529→                          <Label htmlFor="tx-desc">Description (optional)</Label>
+   530→   530→                          <Input
+   531→   531→                            id="tx-desc"
+   532→   532→                            placeholder="What was this transaction for?"
+   533→   533→                            value={txDescription}
+   534→   534→                            onChange={(e) => setTxDescription(e.target.value)}
+   535→   535→                          />
+   536→   536→                        </div>
+   537→   537→                      </div>
+   538→   538→                      <DialogFooter>
+   539→   539→                        <Button variant="outline" onClick={() => setAddTransactionOpen(false)}>
+   540→   540→                          Cancel
+   541→   541→                        </Button>
+   542→   542→                        <Button
+   543→   543→                          onClick={handleCreateTransaction}
+   544→   544→                          disabled={submitting || !txAmount || !txWalletId || !txCategoryId}
+   545→   545→                          className={txType === "INCOME" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}
+   546→   546→                        >
+   547→   547→                          {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   548→   548→                          Add {txType === "INCOME" ? "Income" : "Expense"}
+   549→   549→                        </Button>
+   550→   550→                      </DialogFooter>
+   551→   551→                    </DialogContent>
+   552→   552→                  </Dialog>
+   553→   553→                </div>
+   554→   554→
+   555→   555→                <Separator />
+   556→   556→
+   557→   557→                {/* Recent Transactions List */}
+   558→   558→                {recentTransactions.length === 0 ? (
+   559→   559→                  <Card className="border-dashed">
+   560→   560→                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+   561→   561→                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+   562→   562→                        <Receipt className="h-6 w-6 text-muted-foreground" />
+   563→   563→                      </div>
+   564→   564→                      <h3 className="text-sm font-medium">No transactions yet</h3>
+   565→   565→                      <p className="text-sm text-muted-foreground mt-1">
+   566→   566→                        Start by adding your first transaction to track your finances.
+   567→   567→                      </p>
+   568→   568→                      <Button
+   569→   569→                        className="mt-4 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+   570→   570→                        onClick={() => setAddTransactionOpen(true)}
+   571→   571→                      >
+   572→   572→                        <CirclePlus className="h-4 w-4" />
+   573→   573→                        Add Transaction
+   574→   574→                      </Button>
+   575→   575→                    </CardContent>
+   576→   576→                  </Card>
+   577→   577→                ) : (
+   578→   578→                  <div className="space-y-3">
+   579→   579→                    {recentTransactions.map((tx) => {
+   580→   580→                      const isIncome = tx.type === "INCOME"
+   581→   581→                      const IconComp = getIcon(tx.categoryIcon)
+   582→   582→                      return (
+   583→   583→                        <Card key={tx.id} className="hover:shadow-sm transition-shadow">
+   584→   584→                          <CardContent className="flex items-center gap-4 p-4">
+   585→   585→                            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+   586→   586→                              isIncome
+   587→   587→                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+   588→   588→                                : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400"
+   589→   589→                            }`}>
+   590→   590→                              <IconComp className="h-5 w-5" />
+   591→   591→                            </div>
+   592→   592→                            <div className="flex-1 min-w-0">
+   593→   593→                              <div className="flex items-center gap-2">
+   594→   594→                                <span className="font-medium text-sm truncate">{tx.categoryName}</span>
+   595→   595→                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${
+   596→   596→                                  isIncome
+   597→   597→                                    ? "border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+   598→   598→                                    : "border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-400"
+   599→   599→                                }`}>
+   600→   600→                                  {isIncome ? "Income" : "Expense"}
+   601→   601→                                </Badge>
+   602→   602→                              </div>
+   603→   603→                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+   604→   604→                                {tx.description || tx.walletName} &middot; {tx.transactionDate}
+   605→   605→                              </p>
+   606→   606→                            </div>
+   607→   607→                            <div className={`text-sm font-semibold shrink-0 ${
+   608→   608→                              isIncome ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"
+   609→   609→                            }`}>
+   610→   610→                              {isIncome ? "+" : "-"}{formatCurrency(tx.amount)}
+   611→   611→                            </div>
+   612→   612→                          </CardContent>
+   613→   613→                        </Card>
+   614→   614→                      )
+   615→   615→                    })}
+   616→   616→                  </div>
+   617→   617→                )}
+   618→   618→
+   619→   619→                {/* Dashboard empty state - no wallets */}
+   620→   620→                {wallets.length === 0 && (
+   621→   621→                  <Card className="border-dashed mt-6">
+   622→   622→                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+   623→   623→                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+   624→   624→                        <Wallet className="h-6 w-6 text-muted-foreground" />
+   625→   625→                      </div>
+   626→   626→                      <h3 className="text-sm font-medium">No wallets yet</h3>
+   627→   627→                      <p className="text-sm text-muted-foreground mt-1">
+   628→   628→                        Create your first wallet to start tracking your finances.
+   629→   629→                      </p>
+   630→   630→                    </CardContent>
+   631→   631→                  </Card>
+   632→   632→                )}
+   633→   633→              </>
+   634→   634→            )}
+   635→   635→          </TabsContent>
+   636→   636→
+   637→   637→          {/* ========== WALLETS TAB ========== */}
+   638→   638→          <TabsContent value="wallets" className="space-y-6">
+   639→   639→            <div className="flex items-center justify-between">
+   640→   640→              <h2 className="text-lg font-semibold">Your Wallets</h2>
+   641→   641→              <Dialog open={addWalletOpen} onOpenChange={setAddWalletOpen}>
+   642→   642→                <DialogTrigger asChild>
+   643→   643→                  <Button className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+   644→   644→                    <Plus className="h-4 w-4" />
+   645→   645→                    Add Wallet
+   646→   646→                  </Button>
+   647→   647→                </DialogTrigger>
+   648→   648→                <DialogContent className="sm:max-w-[400px]">
+   649→   649→                  <DialogHeader>
+   650→   650→                    <DialogTitle>Create Wallet</DialogTitle>
+   651→   651→                    <DialogDescription>Add a new wallet to track your finances.</DialogDescription>
+   652→   652→                  </DialogHeader>
+   653→   653→                  <div className="grid gap-4 py-4">
+   654→   654→                    <div className="grid gap-2">
+   655→   655→                      <Label htmlFor="wallet-name">Wallet Name</Label>
+   656→   656→                      <Input
+   657→   657→                        id="wallet-name"
+   658→   658→                        placeholder="e.g. Main Account"
+   659→   659→                        value={walletName}
+   660→   660→                        onChange={(e) => setWalletName(e.target.value)}
+   661→   661→                      />
+   662→   662→                    </div>
+   663→   663→                    <div className="grid gap-2">
+   664→   664→                      <Label htmlFor="wallet-balance">Initial Balance</Label>
+   665→   665→                      <div className="relative">
+   666→   666→                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   667→   667→                        <Input
+   668→   668→                          id="wallet-balance"
+   669→   669→                          type="number"
+   670→   670→                          step="0.01"
+   671→   671→                          min="0"
+   672→   672→                          placeholder="0.00"
+   673→   673→                          className="pl-9"
+   674→   674→                          value={walletBalance}
+   675→   675→                          onChange={(e) => setWalletBalance(e.target.value)}
+   676→   676→                        />
+   677→   677→                      </div>
+   678→   678→                    </div>
+   679→   679→                  </div>
+   680→   680→                  <DialogFooter>
+   681→   681→                    <Button variant="outline" onClick={() => setAddWalletOpen(false)}>Cancel</Button>
+   682→   682→                    <Button
+   683→   683→                      onClick={handleCreateWallet}
+   684→   684→                      disabled={submitting || !walletName.trim()}
+   685→   685→                      className="bg-emerald-600 hover:bg-emerald-700"
+   686→   686→                    >
+   687→   687→                      {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   688→   688→                      Create Wallet
+   689→   689→                    </Button>
+   690→   690→                  </DialogFooter>
+   691→   691→                </DialogContent>
+   692→   692→              </Dialog>
+   693→   693→            </div>
+   694→   694→
+   695→   695→            {loading ? (
+   696→   696→              <div className="flex items-center justify-center py-20">
+   697→   697→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+   698→   698→              </div>
+   699→   699→            ) : wallets.length === 0 ? (
+   700→   700→              <Card className="border-dashed">
+   701→   701→                <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+   702→   702→                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950 mb-4">
+   703→   703→                    <Wallet className="h-8 w-8 text-amber-600 dark:text-amber-400" />
+   704→   704→                  </div>
+   705→   705→                  <h3 className="text-base font-semibold">No wallets yet</h3>
+   706→   706→                  <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+   707→   707→                    Add your first wallet to start tracking your balance, income, and expenses.
+   708→   708→                  </p>
+   709→   709→                  <Button
+   710→   710→                    className="mt-4 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+   711→   711→                    onClick={() => setAddWalletOpen(true)}
+   712→   712→                  >
+   713→   713→                    <Plus className="h-4 w-4" />
+   714→   714→                    Add your first wallet
+   715→   715→                  </Button>
+   716→   716→                </CardContent>
+   717→   717→              </Card>
+   718→   718→            ) : (
+   719→   719→              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+   720→   720→                {wallets.map((wallet) => (
+   721→   721→                  <Card key={wallet.id} className="hover:shadow-md transition-shadow group">
+   722→   722→                    <CardHeader className="pb-3">
+   723→   723→                      <div className="flex items-start justify-between">
+   724→   724→                        <div className="flex items-center gap-2">
+   725→   725→                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950">
+   726→   726→                            <Wallet className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+   727→   727→                          </div>
+   728→   728→                          <div>
+   729→   729→                            <CardTitle className="text-base">{wallet.name}</CardTitle>
+   730→   730→                            <CardDescription className="text-xs">
+   731→   731→                              {wallet.transactionCount} transaction{wallet.transactionCount !== 1 ? "s" : ""}
+   732→   732→                            </CardDescription>
+   733→   733→                          </div>
+   734→   734→                        </div>
+   735→   735→                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+   736→   736→                          <Button
+   737→   737→                            variant="ghost"
+   738→   738→                            size="icon"
+   739→   739→                            className="h-8 w-8"
+   740→   740→                            onClick={() => {
+   741→   741→                              setEditingWallet(wallet)
+   742→   742→                              setEditWalletName(wallet.name)
+   743→   743→                              setEditWalletOpen(true)
+   744→   744→                            }}
+   745→   745→                          >
+   746→   746→                            <Pencil className="h-3.5 w-3.5" />
+   747→   747→                          </Button>
+   748→   748→                          <Button
+   749→   749→                            variant="ghost"
+   750→   750→                            size="icon"
+   751→   751→                            className="h-8 w-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+   752→   752→                            onClick={() => handleDeleteWallet(wallet.id, wallet.name)}
+   753→   753→                          >
+   754→   754→                            <Trash2 className="h-3.5 w-3.5" />
+   755→   755→                          </Button>
+   756→   756→                        </div>
+   757→   757→                      </div>
+   758→   758→                    </CardHeader>
+   759→   759→                    <CardContent>
+   760→   760→                      <div className="text-2xl font-bold text-amber-900 dark:text-amber-200">
+   761→   761→                        {formatCurrency(wallet.balance)}
+   762→   762→                      </div>
+   763→   763→                    </CardContent>
+   764→   764→                  </Card>
+   765→   765→                ))}
+   766→   766→              </div>
+   767→   767→            )}
+   768→   768→
+   769→   769→            {/* Edit Wallet Dialog */}
+   770→   770→            <Dialog open={editWalletOpen} onOpenChange={setEditWalletOpen}>
+   771→   771→              <DialogContent className="sm:max-w-[400px]">
+   772→   772→                <DialogHeader>
+   773→   773→                  <DialogTitle>Edit Wallet</DialogTitle>
+   774→   774→                  <DialogDescription>Change the name of your wallet.</DialogDescription>
+   775→   775→                </DialogHeader>
+   776→   776→                <div className="grid gap-4 py-4">
+   777→   777→                  <div className="grid gap-2">
+   778→   778→                    <Label htmlFor="edit-wallet-name">Wallet Name</Label>
+   779→   779→                    <Input
+   780→   780→                      id="edit-wallet-name"
+   781→   781→                      value={editWalletName}
+   782→   782→                      onChange={(e) => setEditWalletName(e.target.value)}
+   783→   783→                    />
+   784→   784→                  </div>
+   785→   785→                </div>
+   786→   786→                <DialogFooter>
+   787→   787→                  <Button variant="outline" onClick={() => setEditWalletOpen(false)}>Cancel</Button>
+   788→   788→                  <Button
+   789→   789→                    onClick={handleUpdateWallet}
+   790→   790→                    disabled={submitting || !editWalletName.trim()}
+   791→   791→                    className="bg-emerald-600 hover:bg-emerald-700"
+   792→   792→                  >
+   793→   793→                    {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   794→   794→                    Save Changes
+   795→   795→                  </Button>
+   796→   796→                </DialogFooter>
+   797→   797→              </DialogContent>
+   798→   798→            </Dialog>
+   799→   799→          </TabsContent>
+   800→   800→
+   801→   801→          {/* ========== CATEGORIES TAB ========== */}
+   802→   802→          <TabsContent value="categories" className="space-y-6">
+   803→   803→            {loading ? (
+   804→   804→              <div className="flex items-center justify-center py-20">
+   805→   805→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+   806→   806→              </div>
+   807→   807→            ) : (
+   808→   808→              <div className="grid gap-6 lg:grid-cols-2">
+   809→   809→                {/* Income Categories */}
+   810→   810→                <div className="space-y-4">
+   811→   811→                  <div className="flex items-center justify-between">
+   812→   812→                    <div className="flex items-center gap-2">
+   813→   813→                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-950">
+   814→   814→                        <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+   815→   815→                      </div>
+   816→   816→                      <h3 className="text-base font-semibold">Income Categories</h3>
+   817→   817→                    </div>
+   818→   818→                    <Dialog open={addIncomeCatOpen} onOpenChange={setAddIncomeCatOpen}>
+   819→   819→                      <DialogTrigger asChild>
+   820→   820→                        <Button variant="outline" size="sm" className="gap-1">
+   821→   821→                          <Plus className="h-3.5 w-3.5" />
+   822→   822→                          Add
+   823→   823→                        </Button>
+   824→   824→                      </DialogTrigger>
+   825→   825→                      <DialogContent className="sm:max-w-[400px]">
+   826→   826→                        <DialogHeader>
+   827→   827→                          <DialogTitle>Add Income Category</DialogTitle>
+   828→   828→                          <DialogDescription>Create a new income category.</DialogDescription>
+   829→   829→                        </DialogHeader>
+   830→   830→                        <div className="grid gap-4 py-4">
+   831→   831→                          <div className="grid gap-2">
+   832→   832→                            <Label htmlFor="inc-cat-name">Name</Label>
+   833→   833→                            <Input
+   834→   834→                              id="inc-cat-name"
+   835→   835→                              placeholder="e.g. Dividends"
+   836→   836→                              value={catName}
+   837→   837→                              onChange={(e) => setCatName(e.target.value)}
+   838→   838→                            />
+   839→   839→                          </div>
+   840→   840→                          <div className="grid gap-2">
+   841→   841→                            <Label>Icon</Label>
+   842→   842→                            <Select value={catIcon} onValueChange={setCatIcon}>
+   843→   843→                              <SelectTrigger>
+   844→   844→                                <SelectValue placeholder="Choose an icon" />
+   845→   845→                              </SelectTrigger>
+   846→   846→                              <SelectContent>
+   847→   847→                                {availableIcons.map((icon) => {
+   848→   848→                                  const IconComp = getIcon(icon)
+   849→   849→                                  return (
+   850→   850→                                    <SelectItem key={icon} value={icon}>
+   851→   851→                                      <span className="flex items-center gap-2">
+   852→   852→                                        <IconComp className="h-3.5 w-3.5" />
+   853→   853→                                        {icon}
+   854→   854→                                      </span>
+   855→   855→                                    </SelectItem>
+   856→   856→                                  )
+   857→   857→                                })}
+   858→   858→                              </SelectContent>
+   859→   859→                            </Select>
+   860→   860→                          </div>
+   861→   861→                        </div>
+   862→   862→                        <DialogFooter>
+   863→   863→                          <Button variant="outline" onClick={() => setAddIncomeCatOpen(false)}>Cancel</Button>
+   864→   864→                          <Button
+   865→   865→                            onClick={() => handleCreateCategory("INCOME")}
+   866→   866→                            disabled={submitting || !catName.trim()}
+   867→   867→                            className="bg-emerald-600 hover:bg-emerald-700"
+   868→   868→                          >
+   869→   869→                            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   870→   870→                            Add Category
+   871→   871→                          </Button>
+   872→   872→                        </DialogFooter>
+   873→   873→                      </DialogContent>
+   874→   874→                    </Dialog>
+   875→   875→                  </div>
+   876→   876→
+   877→   877→                  {incomeCategories.length === 0 ? (
+   878→   878→                    <Card className="border-dashed">
+   879→   879→                      <CardContent className="flex flex-col items-center py-8 text-center">
+   880→   880→                        <p className="text-sm text-muted-foreground">No income categories yet.</p>
+   881→   881→                      </CardContent>
+   882→   882→                    </Card>
+   883→   883→                  ) : (
+   884→   884→                    <div className="space-y-2">
+   885→   885→                      {incomeCategories.map((cat) => {
+   886→   886→                        const IconComp = getIcon(cat.icon)
+   887→   887→                        return (
+   888→   888→                          <Card key={cat.id} className="hover:shadow-sm transition-shadow group">
+   889→   889→                            <CardContent className="flex items-center gap-3 p-3">
+   890→   890→                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-950">
+   891→   891→                                <IconComp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+   892→   892→                              </div>
+   893→   893→                              <div className="flex-1 min-w-0">
+   894→   894→                                <span className="font-medium text-sm">{cat.name}</span>
+   895→   895→                                <p className="text-xs text-muted-foreground">
+   896→   896→                                  {cat.transactionCount} transaction{cat.transactionCount !== 1 ? "s" : ""}
+   897→   897→                                </p>
+   898→   898→                              </div>
+   899→   899→                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+   900→   900→                                <Button
+   901→   901→                                  variant="ghost"
+   902→   902→                                  size="icon"
+   903→   903→                                  className="h-7 w-7"
+   904→   904→                                  onClick={() => {
+   905→   905→                                    setEditingCategory(cat)
+   906→   906→                                    setEditCatName(cat.name)
+   907→   907→                                    setEditCatIcon(cat.icon || "")
+   908→   908→                                    setEditCategoryOpen(true)
+   909→   909→                                  }}
+   910→   910→                                >
+   911→   911→                                  <Pencil className="h-3 w-3" />
+   912→   912→                                </Button>
+   913→   913→                                <Button
+   914→   914→                                  variant="ghost"
+   915→   915→                                  size="icon"
+   916→   916→                                  className="h-7 w-7 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+   917→   917→                                  onClick={() => handleDeleteCategory(cat.id, cat.name)}
+   918→   918→                                >
+   919→   919→                                  <Trash2 className="h-3 w-3" />
+   920→   920→                                </Button>
+   921→   921→                              </div>
+   922→   922→                            </CardContent>
+   923→   923→                          </Card>
+   924→   924→                        )
+   925→   925→                      })}
+   926→   926→                    </div>
+   927→   927→                  )}
+   928→   928→                </div>
+   929→   929→
+   930→   930→                {/* Expense Categories */}
+   931→   931→                <div className="space-y-4">
+   932→   932→                  <div className="flex items-center justify-between">
+   933→   933→                    <div className="flex items-center gap-2">
+   934→   934→                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-950">
+   935→   935→                        <TrendingDown className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+   936→   936→                      </div>
+   937→   937→                      <h3 className="text-base font-semibold">Expense Categories</h3>
+   938→   938→                    </div>
+   939→   939→                    <Dialog open={addExpenseCatOpen} onOpenChange={setAddExpenseCatOpen}>
+   940→   940→                      <DialogTrigger asChild>
+   941→   941→                        <Button variant="outline" size="sm" className="gap-1">
+   942→   942→                          <Plus className="h-3.5 w-3.5" />
+   943→   943→                          Add
+   944→   944→                        </Button>
+   945→   945→                      </DialogTrigger>
+   946→   946→                      <DialogContent className="sm:max-w-[400px]">
+   947→   947→                        <DialogHeader>
+   948→   948→                          <DialogTitle>Add Expense Category</DialogTitle>
+   949→   949→                          <DialogDescription>Create a new expense category.</DialogDescription>
+   950→   950→                        </DialogHeader>
+   951→   951→                        <div className="grid gap-4 py-4">
+   952→   952→                          <div className="grid gap-2">
+   953→   953→                            <Label htmlFor="exp-cat-name">Name</Label>
+   954→   954→                            <Input
+   955→   955→                              id="exp-cat-name"
+   956→   956→                              placeholder="e.g. Subscriptions"
+   957→   957→                              value={catName}
+   958→   958→                              onChange={(e) => setCatName(e.target.value)}
+   959→   959→                            />
+   960→   960→                          </div>
+   961→   961→                          <div className="grid gap-2">
+   962→   962→                            <Label>Icon</Label>
+   963→   963→                            <Select value={catIcon} onValueChange={setCatIcon}>
+   964→   964→                              <SelectTrigger>
+   965→   965→                                <SelectValue placeholder="Choose an icon" />
+   966→   966→                              </SelectTrigger>
+   967→   967→                              <SelectContent>
+   968→   968→                                {availableIcons.map((icon) => {
+   969→   969→                                  const IconComp = getIcon(icon)
+   970→   970→                                  return (
+   971→   971→                                    <SelectItem key={icon} value={icon}>
+   972→   972→                                      <span className="flex items-center gap-2">
+   973→   973→                                        <IconComp className="h-3.5 w-3.5" />
+   974→   974→                                        {icon}
+   975→   975→                                      </span>
+   976→   976→                                    </SelectItem>
+   977→   977→                                  )
+   978→   978→                                })}
+   979→   979→                              </SelectContent>
+   980→   980→                            </Select>
+   981→   981→                          </div>
+   982→   982→                        </div>
+   983→   983→                        <DialogFooter>
+   984→   984→                          <Button variant="outline" onClick={() => setAddExpenseCatOpen(false)}>Cancel</Button>
+   985→   985→                          <Button
+   986→   986→                            onClick={() => handleCreateCategory("EXPENSE")}
+   987→   987→                            disabled={submitting || !catName.trim()}
+   988→   988→                            className="bg-rose-600 hover:bg-rose-700"
+   989→   989→                          >
+   990→   990→                            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   991→   991→                            Add Category
+   992→   992→                          </Button>
+   993→   993→                        </DialogFooter>
+   994→   994→                      </DialogContent>
+   995→   995→                    </Dialog>
+   996→   996→                  </div>
+   997→   997→
+   998→   998→                  {expenseCategories.length === 0 ? (
+   999→   999→                    <Card className="border-dashed">
+  1000→  1000→                      <CardContent className="flex flex-col items-center py-8 text-center">
+  1001→  1001→                        <p className="text-sm text-muted-foreground">No expense categories yet.</p>
+  1002→  1002→                      </CardContent>
+  1003→  1003→                    </Card>
+  1004→  1004→                  ) : (
+  1005→  1005→                    <div className="space-y-2">
+  1006→  1006→                      {expenseCategories.map((cat) => {
+  1007→  1007→                        const IconComp = getIcon(cat.icon)
+  1008→  1008→                        return (
+  1009→  1009→                          <Card key={cat.id} className="hover:shadow-sm transition-shadow group">
+  1010→  1010→                            <CardContent className="flex items-center gap-3 p-3">
+  1011→  1011→                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-950">
+  1012→  1012→                                <IconComp className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+  1013→  1013→                              </div>
+  1014→  1014→                              <div className="flex-1 min-w-0">
+  1015→  1015→                                <span className="font-medium text-sm">{cat.name}</span>
+  1016→  1016→                                <p className="text-xs text-muted-foreground">
+  1017→  1017→                                  {cat.transactionCount} transaction{cat.transactionCount !== 1 ? "s" : ""}
+  1018→  1018→                                </p>
+  1019→  1019→                              </div>
+  1020→  1020→                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+  1021→  1021→                                <Button
+  1022→  1022→                                  variant="ghost"
+  1023→  1023→                                  size="icon"
+  1024→  1024→                                  className="h-7 w-7"
+  1025→  1025→                                  onClick={() => {
+  1026→  1026→                                    setEditingCategory(cat)
+  1027→  1027→                                    setEditCatName(cat.name)
+  1028→  1028→                                    setEditCatIcon(cat.icon || "")
+  1029→  1029→                                    setEditCategoryOpen(true)
+  1030→  1030→                                  }}
+  1031→  1031→                                >
+  1032→  1032→                                  <Pencil className="h-3 w-3" />
+  1033→  1033→                                </Button>
+  1034→  1034→                                <Button
+  1035→  1035→                                  variant="ghost"
+  1036→  1036→                                  size="icon"
+  1037→  1037→                                  className="h-7 w-7 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+  1038→  1038→                                  onClick={() => handleDeleteCategory(cat.id, cat.name)}
+  1039→  1039→                                >
+  1040→  1040→                                  <Trash2 className="h-3 w-3" />
+  1041→  1041→                                </Button>
+  1042→  1042→                              </div>
+  1043→  1043→                            </CardContent>
+  1044→  1044→                          </Card>
+  1045→  1045→                        )
+  1046→  1046→                      })}
+  1047→  1047→                    </div>
+  1048→  1048→                  )}
+  1049→  1049→                </div>
+  1050→  1050→              </div>
+  1051→  1051→            )}
+  1052→  1052→
+  1053→  1053→            {/* Edit Category Dialog */}
+  1054→  1054→            <Dialog open={editCategoryOpen} onOpenChange={setEditCategoryOpen}>
+  1055→  1055→              <DialogContent className="sm:max-w-[400px]">
+  1056→  1056→                <DialogHeader>
+  1057→  1057→                  <DialogTitle>Edit Category</DialogTitle>
+  1058→  1058→                  <DialogDescription>Update the name and icon of this category.</DialogDescription>
+  1059→  1059→                </DialogHeader>
+  1060→  1060→                <div className="grid gap-4 py-4">
+  1061→  1061→                  <div className="grid gap-2">
+  1062→  1062→                    <Label htmlFor="edit-cat-name">Name</Label>
+  1063→  1063→                    <Input
+  1064→  1064→                      id="edit-cat-name"
+  1065→  1065→                      value={editCatName}
+  1066→  1066→                      onChange={(e) => setEditCatName(e.target.value)}
+  1067→  1067→                    />
+  1068→  1068→                  </div>
+  1069→  1069→                  <div className="grid gap-2">
+  1070→  1070→                    <Label>Icon</Label>
+  1071→  1071→                    <Select value={editCatIcon} onValueChange={setEditCatIcon}>
+  1072→  1072→                      <SelectTrigger>
+  1073→  1073→                        <SelectValue placeholder="Choose an icon" />
+  1074→  1074→                      </SelectTrigger>
+  1075→  1075→                      <SelectContent>
+  1076→  1076→                        {availableIcons.map((icon) => {
+  1077→  1077→                          const IconComp = getIcon(icon)
+  1078→  1078→                          return (
+  1079→  1079→                            <SelectItem key={icon} value={icon}>
+  1080→  1080→                              <span className="flex items-center gap-2">
+  1081→  1081→                                <IconComp className="h-3.5 w-3.5" />
+  1082→  1082→                                {icon}
+  1083→  1083→                              </span>
+  1084→  1084→                            </SelectItem>
+  1085→  1085→                          )
+  1086→  1086→                        })}
+  1087→  1087→                      </SelectContent>
+  1088→  1088→                    </Select>
+  1089→  1089→                  </div>
+  1090→  1090→                </div>
+  1091→  1091→                <DialogFooter>
+  1092→  1092→                  <Button variant="outline" onClick={() => setEditCategoryOpen(false)}>Cancel</Button>
+  1093→  1093→                  <Button
+  1094→  1094→                    onClick={handleUpdateCategory}
+  1095→  1095→                    disabled={submitting || !editCatName.trim()}
+  1096→  1096→                    className="bg-emerald-600 hover:bg-emerald-700"
+  1097→  1097→                  >
+  1098→  1098→                    {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1099→  1099→                    Save Changes
+  1100→  1100→                  </Button>
+  1101→  1101→                </DialogFooter>
+  1102→  1102→              </DialogContent>
+  1103→  1103→            </Dialog>
+  1104→  1104→          </TabsContent>
+  1105→  1105→        </Tabs>
+  1106→  1106→      </main>
+  1107→  1107→
+  1108→  1108→      {/* ===== FOOTER ===== */}
+  1109→  1109→      <footer className="border-t mt-auto">
+  1110→  1110→        <div className="container mx-auto flex h-12 items-center justify-center px-4 sm:px-6">
+  1111→  1111→          <p className="text-xs text-muted-foreground">
+  1112→  1112→            &copy; {new Date().getFullYear()} Finance Tracker. All rights reserved.
+  1113→  1113→          </p>
+  1114→  1114→        </div>
+  1115→  1115→      </footer>
+  1116→  1116→    </div>
+  1117→  1117→  )
+  1118→  1118→}
+  1119→  1119→

@@ -1,6 +1,5 @@
 // ============================================
 // API Service Layer - Frontend communication with Backend
-// Equivalent: Axios service in Spring Boot + React setup
 // ============================================
 
 import type {
@@ -22,10 +21,38 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const json = await res.json()
 
   if (!json.success) {
-    throw new Error(json.error?.message || "API request failed")
+    const message = json.error?.message || "API request failed"
+    const code = json.error?.code
+    // If unauthorized, throw a special error
+    if (code === "UNAUTHORIZED" || res.status === 401) {
+      throw new Error("UNAUTHORIZED")
+    }
+    throw new Error(message)
   }
 
   return json.data as T
+}
+
+// --- Auth API ---
+
+export const authApi = {
+  signup: (data: { name: string; email: string; password: string }) =>
+    apiFetch<{ id: string; name: string; email: string }>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  forgotPassword: (data: { email: string }) =>
+    apiFetch<{ message: string; token?: string }>("/api/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  resetPassword: (data: { token: string; password: string }) =>
+    apiFetch<{ message: string }>("/api/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 }
 
 // --- Wallet API ---
@@ -94,7 +121,7 @@ export const transactionApi = {
     }),
 }
 
-// --- Dashboard API (Phase 3 preview) ---
+// --- Dashboard API ---
 
 export const dashboardApi = {
   summary: () => apiFetch<DashboardSummary>("/api/dashboard/summary"),

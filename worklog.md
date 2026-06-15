@@ -86,3 +86,60 @@ Stage Summary:
 - Prisma $transaction used for atomic operations (equivalent to Spring Boot @Transactional)
 - All PHASE 3 APIs also built as bonus (dashboard summary + transaction search)
 - Lint passes clean, no console errors
+
+---
+Task ID: 3
+Agent: Main Agent
+Task: AUTH - Sign Up, Sign In, and Forgot Password features
+
+Work Log:
+- Updated Prisma schema: Added User model (id, name, email, password, resetToken, resetTokenExp) with relations to Wallet, Category, Transaction
+- Added userId FK to Wallet, Category, Transaction models (all with cascade delete on User)
+- Force-reset database (required due to new required userId columns on existing tables)
+- Installed bcryptjs + @types/bcryptjs for password hashing
+- Created NextAuth.js v4 configuration (src/lib/auth.ts):
+  - CredentialsProvider with email/password
+  - JWT session strategy (30-day expiry)
+  - Custom jwt/session callbacks to include user.id in token
+  - Dedicated PrismaClient instance (avoid singleton caching issues)
+- Created auth API routes:
+  - `POST /api/auth/signup` - Register user + auto-seed 15 default categories for new user
+  - `POST /api/auth/forgot-password` - Generate secure reset token (crypto.randomBytes)
+  - `POST /api/auth/reset-password` - Validate token + expiry + hash new password
+  - `GET/POST /api/auth/[...nextauth]` - NextAuth handler
+- Created auth helpers (src/lib/auth-helpers.ts):
+  - getAuthUser() - Get current session user
+  - requireAuth() - Return user or 401 response
+- Updated ALL data API routes to scope by authenticated user:
+  - Wallets, Categories, Transactions, Dashboard, Search - all filter by userId
+  - requireAuth() guard on every route
+- Created AuthProvider component (src/components/auth-provider.tsx) - SessionProvider wrapper
+- Updated layout.tsx to wrap with AuthProvider
+- Updated page.tsx with complete auth UI:
+  - AuthPage component with 4 views: sign-in, sign-up, forgot-password, reset-password
+  - Sign In: email + password fields, password visibility toggle, links to sign-up and forgot
+  - Sign Up: name + email + password + confirm password, auto sign-in after registration
+  - Forgot Password: email field → generates reset token → shows token in Alert (demo mode)
+  - Reset Password: token + new password + confirm password
+  - Authenticated view: Header with user name + Sign Out button
+  - FinanceTracker component preserved as-is
+  - Home component: auth gate based on useSession() status
+- Updated API service (src/lib/api.ts): Added authApi.signup/forgotPassword/resetPassword
+- Updated seed script: Creates demo user (demo@finance.com / password123) with categories + wallet
+- Added NEXTAUTH_SECRET and NEXTAUTH_URL to .env
+- Disabled Prisma query logging to reduce memory usage
+- Verified via curl:
+  - Sign-in works: Session returns {"user":{"name":"Demo User","email":"demo@finance.com"}}
+  - Auth-scoped data: Wallets/Categories return only user's data
+  - 401 for unauthenticated requests ✓
+- Auth page verified via Agent Browser + VLM: Clean, professional sign-in form
+
+Stage Summary:
+- Full authentication system: Sign Up, Sign In, Sign Out, Forgot Password, Reset Password
+- All data is user-scoped: each user has their own wallets, categories, transactions
+- NextAuth.js v4 with Credentials provider + JWT sessions
+- Password hashing with bcryptjs (12 salt rounds)
+- Password reset with secure token + 1-hour expiry
+- Auto-seed categories for new users on sign-up
+- Demo user: demo@finance.com / password123
+- Lint passes clean

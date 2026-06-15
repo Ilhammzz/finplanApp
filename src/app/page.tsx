@@ -7,10 +7,11 @@ import {
   UtensilsCrossed, Car, ShoppingBag, Gamepad2, Receipt, Heart,
   GraduationCap, Home as HomeIcon, Shield, MoreHorizontal, Briefcase, Laptop,
   Gift, CircleDollarSign, Tag, LayoutDashboard, WalletIcon,
-  Loader2, CirclePlus
+  Loader2, CirclePlus, LogOut, Mail, Lock, User, Eye, EyeOff, KeyRound
 } from "lucide-react"
 
-import { walletApi, categoryApi, transactionApi, dashboardApi } from "@/lib/api"
+import { useSession, signIn, signOut } from "next-auth/react"
+import { walletApi, categoryApi, transactionApi, dashboardApi, authApi } from "@/lib/api"
 import type { WalletResponse, CategoryResponse, TransactionResponse, DashboardSummary } from "@/lib/validations"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -29,6 +30,7 @@ import {
 } from "@/components/ui/select"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { format } from "date-fns"
 
@@ -59,9 +61,587 @@ type WalletWithCount = WalletResponse & { transactionCount: number }
 type CategoryWithCount = CategoryResponse & { transactionCount: number }
 
 // ============================================================
-// MAIN PAGE COMPONENT
+// AUTH PAGE COMPONENT (Sign In / Sign Up / Forgot Password)
 // ============================================================
-export default function Home() {
+type AuthView = "signin" | "signup" | "forgot" | "reset"
+
+function AuthPage() {
+  const { toast } = useToast()
+  const [view, setView] = useState<AuthView>("signin")
+  const [authLoading, setAuthLoading] = useState(false)
+
+  // Sign In state
+  const [signinEmail, setSigninEmail] = useState("")
+  const [signinPassword, setSigninPassword] = useState("")
+  const [showSigninPassword, setShowSigninPassword] = useState(false)
+
+  // Sign Up state
+  const [signupName, setSignupName] = useState("")
+  const [signupEmail, setSignupEmail] = useState("")
+  const [signupPassword, setSignupPassword] = useState("")
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState("")
+  const [showSignupPassword, setShowSignupPassword] = useState(false)
+  const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false)
+
+  // Forgot Password state
+  const [forgotEmail, setForgotEmail] = useState("")
+
+  // Reset Password state
+  const [resetToken, setResetToken] = useState("")
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("")
+  const [showResetPassword, setShowResetPassword] = useState(false)
+  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false)
+
+  const resetSignUpForm = () => {
+    setSignupName("")
+    setSignupEmail("")
+    setSignupPassword("")
+    setSignupConfirmPassword("")
+    setShowSignupPassword(false)
+    setShowSignupConfirmPassword(false)
+  }
+
+  const resetSignInForm = () => {
+    setSigninEmail("")
+    setSigninPassword("")
+    setShowSigninPassword(false)
+  }
+
+  const resetForgotForm = () => {
+    setForgotEmail("")
+  }
+
+  const resetResetForm = () => {
+    setResetToken("")
+    setResetPassword("")
+    setResetConfirmPassword("")
+    setShowResetPassword(false)
+    setShowResetConfirmPassword(false)
+  }
+
+  // --- Sign In handler ---
+  const handleSignIn = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!signinEmail.trim() || !signinPassword) return
+    setAuthLoading(true)
+    try {
+      const result = await signIn("credentials", {
+        email: signinEmail.trim(),
+        password: signinPassword,
+        redirect: false,
+      })
+      if (result?.error) {
+        toast({
+          title: "Sign in failed",
+          description: result.error === "CredentialsSignin"
+            ? "Invalid email or password"
+            : result.error,
+          variant: "destructive",
+        })
+      }
+      // If successful, session will update and the page will re-render
+    } catch (err: unknown) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "An unexpected error occurred",
+        variant: "destructive",
+      })
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  // --- Sign Up handler ---
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!signupName.trim() || !signupEmail.trim() || !signupPassword || !signupConfirmPassword) return
+    if (signupPassword.length < 6) {
+      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" })
+      return
+    }
+    if (signupPassword !== signupConfirmPassword) {
+      toast({ title: "Error", description: "Passwords do not match", variant: "destructive" })
+      return
+    }
+    setAuthLoading(true)
+    try {
+      await authApi.signup({
+        name: signupName.trim(),
+        email: signupEmail.trim(),
+        password: signupPassword,
+      })
+      toast({
+        title: "Account created",
+        description: "Your account has been created. Signing you in...",
+      })
+      // Auto sign-in after sign up
+      const result = await signIn("credentials", {
+        email: signupEmail.trim(),
+        password: signupPassword,
+        redirect: false,
+      })
+      if (result?.error) {
+        toast({
+          title: "Auto sign-in failed",
+          description: "Account created. Please sign in manually.",
+          variant: "destructive",
+        })
+        setView("signin")
+        resetSignUpForm()
+      }
+    } catch (err: unknown) {
+      toast({
+        title: "Sign up failed",
+        description: err instanceof Error ? err.message : "Failed to create account",
+        variant: "destructive",
+      })
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  // --- Forgot Password handler ---
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!forgotEmail.trim()) return
+    setAuthLoading(true)
+    try {
+      const result = await authApi.forgotPassword({ email: forgotEmail.trim() })
+      if (result.token) {
+        setResetToken(result.token)
+        toast({
+          title: "Reset token generated",
+          description: "Copy the token below to reset your password.",
+        })
+        setView("reset")
+      } else {
+        toast({
+          title: "Check your email",
+          description: result.message || "If an account exists with this email, a reset link has been sent.",
+        })
+      }
+    } catch (err: unknown) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to process request",
+        variant: "destructive",
+      })
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  // --- Reset Password handler ---
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!resetToken || !resetPassword || !resetConfirmPassword) return
+    if (resetPassword.length < 6) {
+      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" })
+      return
+    }
+    if (resetPassword !== resetConfirmPassword) {
+      toast({ title: "Error", description: "Passwords do not match", variant: "destructive" })
+      return
+    }
+    setAuthLoading(true)
+    try {
+      await authApi.resetPassword({ token: resetToken, password: resetPassword })
+      toast({
+        title: "Password reset successful",
+        description: "You can now sign in with your new password.",
+      })
+      resetResetForm()
+      resetForgotForm()
+      resetSignInForm()
+      setView("signin")
+    } catch (err: unknown) {
+      toast({
+        title: "Reset failed",
+        description: err instanceof Error ? err.message : "Failed to reset password",
+        variant: "destructive",
+      })
+    } finally {
+      setAuthLoading(false)
+    }
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col bg-gradient-to-br from-emerald-50/50 via-background to-amber-50/30 dark:from-emerald-950/20 dark:via-background dark:to-amber-950/10">
+      <main className="flex-1 flex items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md">
+          {/* Logo + Title */}
+          <div className="flex flex-col items-center mb-8">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 mb-4">
+              <Wallet className="h-7 w-7" />
+            </div>
+            <h1 className="text-2xl font-bold tracking-tight">Finance Tracker</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {view === "signin" && "Sign in to manage your finances"}
+              {view === "signup" && "Create an account to get started"}
+              {view === "forgot" && "Reset your password"}
+              {view === "reset" && "Enter your new password"}
+            </p>
+          </div>
+
+          {/* ===== SIGN IN FORM ===== */}
+          {view === "signin" && (
+            <Card className="shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">Sign In</CardTitle>
+                <CardDescription>Enter your credentials to access your account</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSignIn} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="signin-email">Email</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signin-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        className="pl-9"
+                        value={signinEmail}
+                        onChange={(e) => setSigninEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signin-password">Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signin-password"
+                        type={showSigninPassword ? "text" : "password"}
+                        placeholder="Enter your password"
+                        className="pl-9 pr-9"
+                        value={signinPassword}
+                        onChange={(e) => setSigninPassword(e.target.value)}
+                        required
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setShowSigninPassword(!showSigninPassword)}
+                      >
+                        {showSigninPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    disabled={authLoading || !signinEmail.trim() || !signinPassword}
+                  >
+                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Sign In
+                  </Button>
+                </form>
+                <div className="mt-4 space-y-2 text-center">
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+                    onClick={() => { resetForgotForm(); setView("forgot") }}
+                  >
+                    Forgot your password?
+                  </button>
+                  <div className="text-sm text-muted-foreground">
+                    Don&apos;t have an account?{" "}
+                    <button
+                      type="button"
+                      className="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+                      onClick={() => { resetSignUpForm(); setView("signup") }}
+                    >
+                      Sign up
+                    </button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ===== SIGN UP FORM ===== */}
+          {view === "signup" && (
+            <Card className="shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">Create Account</CardTitle>
+                <CardDescription>Fill in your details to get started</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleSignUp} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-name">Name</Label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signup-name"
+                        type="text"
+                        placeholder="Your name"
+                        className="pl-9"
+                        value={signupName}
+                        onChange={(e) => setSignupName(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-email">Email</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signup-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        className="pl-9"
+                        value={signupEmail}
+                        onChange={(e) => setSignupEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-password">Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signup-password"
+                        type={showSignupPassword ? "text" : "password"}
+                        placeholder="Min. 6 characters"
+                        className="pl-9 pr-9"
+                        value={signupPassword}
+                        onChange={(e) => setSignupPassword(e.target.value)}
+                        required
+                        minLength={6}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setShowSignupPassword(!showSignupPassword)}
+                      >
+                        {showSignupPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-confirm-password">Confirm Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="signup-confirm-password"
+                        type={showSignupConfirmPassword ? "text" : "password"}
+                        placeholder="Confirm your password"
+                        className="pl-9 pr-9"
+                        value={signupConfirmPassword}
+                        onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                        required
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setShowSignupConfirmPassword(!showSignupConfirmPassword)}
+                      >
+                        {showSignupConfirmPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    disabled={authLoading || !signupName.trim() || !signupEmail.trim() || !signupPassword || !signupConfirmPassword}
+                  >
+                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Create Account
+                  </Button>
+                </form>
+                <div className="mt-4 text-center text-sm text-muted-foreground">
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    className="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+                    onClick={() => { resetSignInForm(); setView("signin") }}
+                  >
+                    Sign in
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ===== FORGOT PASSWORD FORM ===== */}
+          {view === "forgot" && (
+            <Card className="shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">Forgot Password</CardTitle>
+                <CardDescription>Enter your email to receive a password reset token</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleForgotPassword} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="forgot-email">Email</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="forgot-email"
+                        type="email"
+                        placeholder="you@example.com"
+                        className="pl-9"
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    disabled={authLoading || !forgotEmail.trim()}
+                  >
+                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Send Reset Link
+                  </Button>
+                </form>
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+                    onClick={() => { resetSignInForm(); setView("signin") }}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* ===== RESET PASSWORD FORM ===== */}
+          {view === "reset" && (
+            <Card className="shadow-lg">
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl">Reset Password</CardTitle>
+                <CardDescription>Enter the reset token and your new password</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleResetPassword} className="space-y-4">
+                  {resetToken && (
+                    <Alert className="mb-2">
+                      <KeyRound className="h-4 w-4" />
+                      <AlertDescription className="break-all text-xs">
+                        Your reset token: <code className="font-mono bg-muted px-1 py-0.5 rounded select-all">{resetToken}</code>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-token">Reset Token</Label>
+                    <div className="relative">
+                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="reset-token"
+                        type="text"
+                        placeholder="Paste your reset token"
+                        className="pl-9"
+                        value={resetToken}
+                        onChange={(e) => setResetToken(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-password">New Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="reset-password"
+                        type={showResetPassword ? "text" : "password"}
+                        placeholder="Min. 6 characters"
+                        className="pl-9 pr-9"
+                        value={resetPassword}
+                        onChange={(e) => setResetPassword(e.target.value)}
+                        required
+                        minLength={6}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setShowResetPassword(!showResetPassword)}
+                      >
+                        {showResetPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reset-confirm-password">Confirm New Password</Label>
+                    <div className="relative">
+                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="reset-confirm-password"
+                        type={showResetConfirmPassword ? "text" : "password"}
+                        placeholder="Confirm your new password"
+                        className="pl-9 pr-9"
+                        value={resetConfirmPassword}
+                        onChange={(e) => setResetConfirmPassword(e.target.value)}
+                        required
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                        onClick={() => setShowResetConfirmPassword(!showResetConfirmPassword)}
+                      >
+                        {showResetConfirmPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </Button>
+                    </div>
+                  </div>
+                  <Button
+                    type="submit"
+                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+                    disabled={authLoading || !resetToken || !resetPassword || !resetConfirmPassword}
+                  >
+                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Reset Password
+                  </Button>
+                </form>
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+                    onClick={() => { resetResetForm(); resetForgotForm(); setView("signin") }}
+                  >
+                    Back to sign in
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </main>
+
+      {/* ===== FOOTER ===== */}
+      <footer className="border-t mt-auto">
+        <div className="container mx-auto flex h-12 items-center justify-center px-4 sm:px-6">
+          <p className="text-xs text-muted-foreground">
+            &copy; {new Date().getFullYear()} Finance Tracker. All rights reserved.
+          </p>
+        </div>
+      </footer>
+    </div>
+  )
+}
+
+// ============================================================
+// FINANCE TRACKER COMPONENT (original app, shown when authenticated)
+// ============================================================
+function FinanceTracker() {
   const { toast } = useToast()
 
   // --- Data state ---
@@ -295,21 +875,7 @@ export default function Home() {
   // RENDER
   // ============================================================
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      {/* ===== HEADER ===== */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container mx-auto flex h-14 items-center px-4 sm:px-6">
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
-              <Wallet className="h-4 w-4" />
-            </div>
-            <h1 className="text-lg font-bold tracking-tight">Finance Tracker</h1>
-          </div>
-        </div>
-      </header>
-
-      {/* ===== MAIN CONTENT ===== */}
-      <main className="flex-1 container mx-auto px-4 sm:px-6 py-6">
+    <div className="container mx-auto px-4 sm:px-6 py-6">
         <Tabs defaultValue="dashboard" className="w-full">
           <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="dashboard" className="gap-1.5">
@@ -1103,6 +1669,70 @@ export default function Home() {
             </Dialog>
           </TabsContent>
         </Tabs>
+    </div>
+  )
+}
+
+// ============================================================
+// MAIN PAGE COMPONENT (auth gate)
+// ============================================================
+export default function Home() {
+  const { data: session, status } = useSession()
+
+  // Loading state
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50/50 via-background to-amber-50/30 dark:from-emerald-950/20 dark:via-background dark:to-amber-950/10">
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20">
+            <Wallet className="h-7 w-7 animate-pulse" />
+          </div>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span className="text-sm">Loading...</span>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Unauthenticated - show auth UI
+  if (status === "unauthenticated") {
+    return <AuthPage />
+  }
+
+  // Authenticated - show the finance tracker with user name in header
+  return (
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* ===== HEADER WITH USER INFO ===== */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container mx-auto flex h-14 items-center justify-between px-4 sm:px-6">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
+              <Wallet className="h-4 w-4" />
+            </div>
+            <h1 className="text-lg font-bold tracking-tight">Finance Tracker</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-muted-foreground hidden sm:inline">
+              Hello, <span className="font-medium text-foreground">{session?.user?.name || "User"}</span>
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => signOut()}
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Sign Out</span>
+            </Button>
+          </div>
+        </div>
+      </header>
+
+      {/* ===== MAIN CONTENT ===== */}
+      <main className="flex-1">
+        <FinanceTracker />
       </main>
 
       {/* ===== FOOTER ===== */}

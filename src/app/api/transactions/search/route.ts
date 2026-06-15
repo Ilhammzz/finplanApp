@@ -1,16 +1,19 @@
 // ============================================
-// Transaction Search API Route - GET (search/list transactions)
-// Supports filtering by type, walletId, date range, and pagination
+// Transaction Search API Route - GET
+// Scoped to authenticated user
 // ============================================
 
 import { NextRequest } from "next/server"
 import { db } from "@/lib/db"
 import { transactionSearchSchema, toTransactionResponse } from "@/lib/validations"
 import { handleError, successResponse } from "@/lib/api-utils"
+import { requireAuth } from "@/lib/auth-helpers"
 
-// GET /api/transactions/search - Search/list transactions
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth()
+    if ("json" in auth) return auth
+
     const { searchParams } = new URL(request.url)
     const typeParam = searchParams.get("type")
     const params = {
@@ -24,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     const validated = transactionSearchSchema.parse(params)
 
-    const where: Record<string, unknown> = {}
+    const where: Record<string, unknown> = { userId: auth.id }
     if (validated.type) where.type = validated.type
     if (validated.walletId) where.walletId = validated.walletId
     if (validated.startDate || validated.endDate) {

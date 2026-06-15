@@ -11,8 +11,27 @@ datasource db {
 }
 
 // ============================================
+// User Entity - Authentication & ownership
+// ============================================
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String    // bcrypt hashed
+  resetToken    String?   // Password reset token
+  resetTokenExp String?   // Reset token expiry (ISO date string)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  wallets      Wallet[]
+  categories   Category[]
+  transactions Transaction[]
+
+  @@map("users")
+}
+
+// ============================================
 // Wallet Entity - Represents a financial account
-// Maps to: wallets table (id, name, balance)
 // ============================================
 model Wallet {
   id           String        @id @default(cuid())
@@ -20,15 +39,17 @@ model Wallet {
   balance      Float         @default(0)
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
 
+  @@index([userId])
   @@map("wallets")
 }
 
 // ============================================
 // Category Entity - Income/Expense classification
-// Maps to: categories table (id, name, type)
-// type: INCOME | EXPENSE (enum)
 // ============================================
 model Category {
   id           String        @id @default(cuid())
@@ -37,15 +58,17 @@ model Category {
   icon         String?       // Optional icon name from Lucide
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions Transaction[]
 
+  @@index([userId])
   @@map("categories")
 }
 
 // ============================================
 // Transaction Entity - Financial transaction record
-// Maps to: transactions table
-// wallet_id (FK) -> Wallet, category_id (FK) -> Category
 // ============================================
 model Transaction {
   id              String   @id @default(cuid())
@@ -56,12 +79,16 @@ model Transaction {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   walletId   String
   wallet     Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
 
+  @@index([userId])
   @@index([walletId])
   @@index([categoryId])
   @@index([transactionDate])
