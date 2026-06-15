@@ -1,0 +1,70 @@
+// Personal Finance Tracker - Database Schema
+// Adapted from Spring Boot JPA entities to Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// Wallet Entity - Represents a financial account
+// Maps to: wallets table (id, name, balance)
+// ============================================
+model Wallet {
+  id           String        @id @default(cuid())
+  name         String
+  balance      Float         @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+
+  @@map("wallets")
+}
+
+// ============================================
+// Category Entity - Income/Expense classification
+// Maps to: categories table (id, name, type)
+// type: INCOME | EXPENSE (enum)
+// ============================================
+model Category {
+  id           String        @id @default(cuid())
+  name         String
+  type         String        // "INCOME" | "EXPENSE"
+  icon         String?       // Optional icon name from Lucide
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+
+  @@map("categories")
+}
+
+// ============================================
+// Transaction Entity - Financial transaction record
+// Maps to: transactions table
+// wallet_id (FK) -> Wallet, category_id (FK) -> Category
+// ============================================
+model Transaction {
+  id              String   @id @default(cuid())
+  amount          Float
+  type            String   // "INCOME" | "EXPENSE"
+  description     String?
+  transactionDate String   // ISO date string (YYYY-MM-DD)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  walletId   String
+  wallet     Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([walletId])
+  @@index([categoryId])
+  @@index([transactionDate])
+  @@index([type])
+  @@map("transactions")
+}
