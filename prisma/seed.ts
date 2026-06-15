@@ -59,18 +59,9 @@ async function main() {
     })
   }
 
-  // Seed a default wallet
-  await prisma.wallet.upsert({
-    where: { id: "seed-wallet-main" },
-    update: {},
-    create: {
-      id: "seed-wallet-main",
-      name: "Main Wallet",
-      balance: 0,
-    },
-  })
+  // No default wallet - user must create wallets manually
 
-  console.log("✅ Seed completed: Default categories and wallet created")
+  console.log("✅ Seed completed: Default categories created")
 }
 
 main()
