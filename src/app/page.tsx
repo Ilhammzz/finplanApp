@@ -44,15 +44,14 @@ function getIcon(iconName: string | null) {
   return iconMap[iconName] || Tag
 }
 
-// --- Currency formatter ---
-const currencyFmt = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  minimumFractionDigits: 2,
-})
-
+// --- Currency formatter (Indonesian Rupiah) ---
 function formatCurrency(amount: number) {
-  return currencyFmt.format(amount)
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount)
 }
 
 // --- Type for wallet with transaction count ---
