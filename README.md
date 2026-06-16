@@ -1,2 +1,0 @@
-# finplanApp
-Financial tracker app
