@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
 import {
   Wallet, Plus, Pencil, Trash2, TrendingUp, TrendingDown,
   DollarSign, ArrowUpRight, ArrowDownRight, CalendarDays,
@@ -67,6 +68,8 @@ type AuthView = "signin" | "signup" | "forgot" | "reset"
 
 function AuthPage() {
   const { toast } = useToast()
+  const searchParams = useSearchParams()
+  const router = useRouter()
   const [view, setView] = useState<AuthView>("signin")
   const [authLoading, setAuthLoading] = useState(false)
 
@@ -93,6 +96,14 @@ function AuthPage() {
   const [showResetPassword, setShowResetPassword] = useState(false)
   const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false)
 
+  useEffect(() => {
+    const tokenFromUrl = searchParams.get("token")
+    if(tokenFromUrl){
+      setResetToken(tokenFromUrl)
+      setView("reset")
+    }
+  }, [searchParams])
+
   const resetSignUpForm = () => {
     setSignupName("")
     setSignupEmail("")
@@ -113,7 +124,6 @@ function AuthPage() {
   }
 
   const resetResetForm = () => {
-    setResetToken("")
     setResetPassword("")
     setResetConfirmPassword("")
     setShowResetPassword(false)
@@ -201,26 +211,24 @@ function AuthPage() {
     }
   }
 
-  // --- Forgot Password handler ---
+  // --- UPDATED Forgot Password handler ---
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!forgotEmail.trim()) return
     setAuthLoading(true)
     try {
-      const result = await authApi.forgotPassword({ email: forgotEmail.trim() })
-      if (result.token) {
-        setResetToken(result.token)
-        toast({
-          title: "Reset token generated",
-          description: "Copy the token below to reset your password.",
-        })
-        setView("reset")
-      } else {
-        toast({
-          title: "Check your email",
-          description: result.message || "If an account exists with this email, a reset link has been sent.",
-        })
-      }
+      await authApi.forgotPassword({ email: forgotEmail.trim() })
+      // Always show success message (token is now sent via email)
+      toast({
+        title: "Check your email",
+        description: "If an account exists with this email, a reset link has been sent.",
+      })
+      // Don't switch to reset view - user will click the link in their email
+      // Optionally go back to sign in after a delay
+      setTimeout(() => {
+        resetForgotForm()
+        setView("signin")
+      }, 2000)
     } catch (err: unknown) {
       toast({
         title: "Error",
@@ -475,12 +483,14 @@ function AuthPage() {
             </Card>
           )}
 
-          {/* ===== FORGOT PASSWORD FORM ===== */}
+  {/* ===== FORGOT PASSWORD FORM ===== */}
           {view === "forgot" && (
             <Card className="shadow-lg">
               <CardHeader className="pb-4">
                 <CardTitle className="text-xl">Forgot Password</CardTitle>
-                <CardDescription>Enter your email to receive a password reset token</CardDescription>
+                <CardDescription>
+                  Enter your email to receive a password reset link
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleForgotPassword} className="space-y-4">
@@ -521,38 +531,34 @@ function AuthPage() {
             </Card>
           )}
 
-          {/* ===== RESET PASSWORD FORM ===== */}
+              {/* ===== RESET PASSWORD FORM (UPDATED) ===== */}
           {view === "reset" && (
             <Card className="shadow-lg">
               <CardHeader className="pb-4">
                 <CardTitle className="text-xl">Reset Password</CardTitle>
-                <CardDescription>Enter the reset token and your new password</CardDescription>
+                <CardDescription>Enter your new password</CardDescription>
               </CardHeader>
               <CardContent>
                 <form onSubmit={handleResetPassword} className="space-y-4">
-                  {resetToken && (
-                    <Alert className="mb-2">
-                      <KeyRound className="h-4 w-4" />
-                      <AlertDescription className="break-all text-xs">
-                        Your reset token: <code className="font-mono bg-muted px-1 py-0.5 rounded select-all">{resetToken}</code>
-                      </AlertDescription>
-                    </Alert>
-                  )}
+                  {/* Remove the Alert that shows the token - it's now in the URL */}
+                  
+                  {/* Token field - READ ONLY, populated from URL */}
                   <div className="space-y-2">
-                    <Label htmlFor="reset-token">Reset Token</Label>
+                    <Label>Reset Token</Label>
                     <div className="relative">
                       <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
-                        id="reset-token"
                         type="text"
-                        placeholder="Paste your reset token"
-                        className="pl-9"
+                        className="pl-9 bg-muted"
                         value={resetToken}
-                        onChange={(e) => setResetToken(e.target.value)}
-                        required
+                        readOnly
                       />
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      Token from your reset link
+                    </p>
                   </div>
+
                   <div className="space-y-2">
                     <Label htmlFor="reset-password">New Password</Label>
                     <div className="relative">
