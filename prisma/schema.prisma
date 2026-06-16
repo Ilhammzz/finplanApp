@@ -1,0 +1,96 @@
+// Personal Finance Tracker - Database Schema
+// Adapted from Spring Boot JPA entities to Prisma ORM
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ============================================
+// User Entity - Authentication & ownership
+// ============================================
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String    // bcrypt hashed
+  resetToken    String?   // Password reset token
+  resetTokenExp String?   // Reset token expiry (ISO date string)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  wallets      Wallet[]
+  categories   Category[]
+  transactions Transaction[]
+
+  @@map("users")
+}
+
+// ============================================
+// Wallet Entity - Represents a financial account
+// ============================================
+model Wallet {
+  id           String        @id @default(cuid())
+  name         String
+  balance      Float         @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("wallets")
+}
+
+// ============================================
+// Category Entity - Income/Expense classification
+// ============================================
+model Category {
+  id           String        @id @default(cuid())
+  name         String
+  type         String        // "INCOME" | "EXPENSE"
+  icon         String?       // Optional icon name from Lucide
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  userId       String
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+  @@map("categories")
+}
+
+// ============================================
+// Transaction Entity - Financial transaction record
+// ============================================
+model Transaction {
+  id              String   @id @default(cuid())
+  amount          Float
+  type            String   // "INCOME" | "EXPENSE"
+  description     String?
+  transactionDate String   // ISO date string (YYYY-MM-DD)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  walletId   String
+  wallet     Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([walletId])
+  @@index([categoryId])
+  @@index([transactionDate])
+  @@index([type])
+  @@map("transactions")
+}

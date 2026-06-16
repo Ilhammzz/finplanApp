@@ -1,0 +1,1749 @@
+     1→'use client'
+     2→
+     3→import { useState, useEffect, useCallback } from "react"
+     4→import {
+     5→  Wallet, Plus, Pencil, Trash2, TrendingUp, TrendingDown,
+     6→  DollarSign, ArrowUpRight, ArrowDownRight, CalendarDays,
+     7→  UtensilsCrossed, Car, ShoppingBag, Gamepad2, Receipt, Heart,
+     8→  GraduationCap, Home as HomeIcon, Shield, MoreHorizontal, Briefcase, Laptop,
+     9→  Gift, CircleDollarSign, Tag, LayoutDashboard, WalletIcon,
+    10→  Loader2, CirclePlus, LogOut, Mail, Lock, User, Eye, EyeOff, KeyRound
+    11→} from "lucide-react"
+    12→
+    13→import { useSession, signIn, signOut } from "next-auth/react"
+    14→import { walletApi, categoryApi, transactionApi, dashboardApi, authApi } from "@/lib/api"
+    15→import type { WalletResponse, CategoryResponse, TransactionResponse, DashboardSummary } from "@/lib/validations"
+    16→
+    17→import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+    18→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+    19→import { Button } from "@/components/ui/button"
+    20→import { Input } from "@/components/ui/input"
+    21→import { Label } from "@/components/ui/label"
+    22→import { Badge } from "@/components/ui/badge"
+    23→import { Separator } from "@/components/ui/separator"
+    24→import {
+    25→  Dialog, DialogContent, DialogDescription, DialogFooter,
+    26→  DialogHeader, DialogTitle, DialogTrigger,
+    27→} from "@/components/ui/dialog"
+    28→import {
+    29→  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+    30→} from "@/components/ui/select"
+    31→import { Calendar } from "@/components/ui/calendar"
+    32→import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+    33→import { Alert, AlertDescription } from "@/components/ui/alert"
+    34→import { useToast } from "@/hooks/use-toast"
+    35→import { format } from "date-fns"
+    36→
+    37→// --- Icon mapping ---
+    38→const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
+    39→  UtensilsCrossed, Car, ShoppingBag, Gamepad2, Receipt, Heart,
+    40→  GraduationCap, Home: HomeIcon, Shield, MoreHorizontal, Briefcase, Laptop,
+    41→  Gift, TrendingUp, DollarSign, CircleDollarSign, Tag,
+    42→}
+    43→
+    44→function getIcon(iconName: string | null) {
+    45→  if (!iconName) return Tag
+    46→  return iconMap[iconName] || Tag
+    47→}
+    48→
+    49→// --- Currency formatter (Indonesian Rupiah) ---
+    50→function formatCurrency(amount: number) {
+    51→  return new Intl.NumberFormat("id-ID", {
+    52→    style: "currency",
+    53→    currency: "IDR",
+    54→    minimumFractionDigits: 0,
+    55→    maximumFractionDigits: 0,
+    56→  }).format(amount)
+    57→}
+    58→
+    59→// --- Type for wallet with transaction count ---
+    60→type WalletWithCount = WalletResponse & { transactionCount: number }
+    61→type CategoryWithCount = CategoryResponse & { transactionCount: number }
+    62→
+    63→// ============================================================
+    64→// AUTH PAGE COMPONENT (Sign In / Sign Up / Forgot Password)
+    65→// ============================================================
+    66→type AuthView = "signin" | "signup" | "forgot" | "reset"
+    67→
+    68→function AuthPage() {
+    69→  const { toast } = useToast()
+    70→  const [view, setView] = useState<AuthView>("signin")
+    71→  const [authLoading, setAuthLoading] = useState(false)
+    72→
+    73→  // Sign In state
+    74→  const [signinEmail, setSigninEmail] = useState("")
+    75→  const [signinPassword, setSigninPassword] = useState("")
+    76→  const [showSigninPassword, setShowSigninPassword] = useState(false)
+    77→
+    78→  // Sign Up state
+    79→  const [signupName, setSignupName] = useState("")
+    80→  const [signupEmail, setSignupEmail] = useState("")
+    81→  const [signupPassword, setSignupPassword] = useState("")
+    82→  const [signupConfirmPassword, setSignupConfirmPassword] = useState("")
+    83→  const [showSignupPassword, setShowSignupPassword] = useState(false)
+    84→  const [showSignupConfirmPassword, setShowSignupConfirmPassword] = useState(false)
+    85→
+    86→  // Forgot Password state
+    87→  const [forgotEmail, setForgotEmail] = useState("")
+    88→
+    89→  // Reset Password state
+    90→  const [resetToken, setResetToken] = useState("")
+    91→  const [resetPassword, setResetPassword] = useState("")
+    92→  const [resetConfirmPassword, setResetConfirmPassword] = useState("")
+    93→  const [showResetPassword, setShowResetPassword] = useState(false)
+    94→  const [showResetConfirmPassword, setShowResetConfirmPassword] = useState(false)
+    95→
+    96→  const resetSignUpForm = () => {
+    97→    setSignupName("")
+    98→    setSignupEmail("")
+    99→    setSignupPassword("")
+   100→    setSignupConfirmPassword("")
+   101→    setShowSignupPassword(false)
+   102→    setShowSignupConfirmPassword(false)
+   103→  }
+   104→
+   105→  const resetSignInForm = () => {
+   106→    setSigninEmail("")
+   107→    setSigninPassword("")
+   108→    setShowSigninPassword(false)
+   109→  }
+   110→
+   111→  const resetForgotForm = () => {
+   112→    setForgotEmail("")
+   113→  }
+   114→
+   115→  const resetResetForm = () => {
+   116→    setResetToken("")
+   117→    setResetPassword("")
+   118→    setResetConfirmPassword("")
+   119→    setShowResetPassword(false)
+   120→    setShowResetConfirmPassword(false)
+   121→  }
+   122→
+   123→  // --- Sign In handler ---
+   124→  const handleSignIn = async (e: React.FormEvent) => {
+   125→    e.preventDefault()
+   126→    if (!signinEmail.trim() || !signinPassword) return
+   127→    setAuthLoading(true)
+   128→    try {
+   129→      const result = await signIn("credentials", {
+   130→        email: signinEmail.trim(),
+   131→        password: signinPassword,
+   132→        redirect: false,
+   133→      })
+   134→      if (result?.error) {
+   135→        toast({
+   136→          title: "Sign in failed",
+   137→          description: result.error === "CredentialsSignin"
+   138→            ? "Invalid email or password"
+   139→            : result.error,
+   140→          variant: "destructive",
+   141→        })
+   142→      }
+   143→      // If successful, session will update and the page will re-render
+   144→    } catch (err: unknown) {
+   145→      toast({
+   146→        title: "Error",
+   147→        description: err instanceof Error ? err.message : "An unexpected error occurred",
+   148→        variant: "destructive",
+   149→      })
+   150→    } finally {
+   151→      setAuthLoading(false)
+   152→    }
+   153→  }
+   154→
+   155→  // --- Sign Up handler ---
+   156→  const handleSignUp = async (e: React.FormEvent) => {
+   157→    e.preventDefault()
+   158→    if (!signupName.trim() || !signupEmail.trim() || !signupPassword || !signupConfirmPassword) return
+   159→    if (signupPassword.length < 6) {
+   160→      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" })
+   161→      return
+   162→    }
+   163→    if (signupPassword !== signupConfirmPassword) {
+   164→      toast({ title: "Error", description: "Passwords do not match", variant: "destructive" })
+   165→      return
+   166→    }
+   167→    setAuthLoading(true)
+   168→    try {
+   169→      await authApi.signup({
+   170→        name: signupName.trim(),
+   171→        email: signupEmail.trim(),
+   172→        password: signupPassword,
+   173→      })
+   174→      toast({
+   175→        title: "Account created",
+   176→        description: "Your account has been created. Signing you in...",
+   177→      })
+   178→      // Auto sign-in after sign up
+   179→      const result = await signIn("credentials", {
+   180→        email: signupEmail.trim(),
+   181→        password: signupPassword,
+   182→        redirect: false,
+   183→      })
+   184→      if (result?.error) {
+   185→        toast({
+   186→          title: "Auto sign-in failed",
+   187→          description: "Account created. Please sign in manually.",
+   188→          variant: "destructive",
+   189→        })
+   190→        setView("signin")
+   191→        resetSignUpForm()
+   192→      }
+   193→    } catch (err: unknown) {
+   194→      toast({
+   195→        title: "Sign up failed",
+   196→        description: err instanceof Error ? err.message : "Failed to create account",
+   197→        variant: "destructive",
+   198→      })
+   199→    } finally {
+   200→      setAuthLoading(false)
+   201→    }
+   202→  }
+   203→
+   204→  // --- Forgot Password handler ---
+   205→  const handleForgotPassword = async (e: React.FormEvent) => {
+   206→    e.preventDefault()
+   207→    if (!forgotEmail.trim()) return
+   208→    setAuthLoading(true)
+   209→    try {
+   210→      const result = await authApi.forgotPassword({ email: forgotEmail.trim() })
+   211→      if (result.token) {
+   212→        setResetToken(result.token)
+   213→        toast({
+   214→          title: "Reset token generated",
+   215→          description: "Copy the token below to reset your password.",
+   216→        })
+   217→        setView("reset")
+   218→      } else {
+   219→        toast({
+   220→          title: "Check your email",
+   221→          description: result.message || "If an account exists with this email, a reset link has been sent.",
+   222→        })
+   223→      }
+   224→    } catch (err: unknown) {
+   225→      toast({
+   226→        title: "Error",
+   227→        description: err instanceof Error ? err.message : "Failed to process request",
+   228→        variant: "destructive",
+   229→      })
+   230→    } finally {
+   231→      setAuthLoading(false)
+   232→    }
+   233→  }
+   234→
+   235→  // --- Reset Password handler ---
+   236→  const handleResetPassword = async (e: React.FormEvent) => {
+   237→    e.preventDefault()
+   238→    if (!resetToken || !resetPassword || !resetConfirmPassword) return
+   239→    if (resetPassword.length < 6) {
+   240→      toast({ title: "Error", description: "Password must be at least 6 characters", variant: "destructive" })
+   241→      return
+   242→    }
+   243→    if (resetPassword !== resetConfirmPassword) {
+   244→      toast({ title: "Error", description: "Passwords do not match", variant: "destructive" })
+   245→      return
+   246→    }
+   247→    setAuthLoading(true)
+   248→    try {
+   249→      await authApi.resetPassword({ token: resetToken, password: resetPassword })
+   250→      toast({
+   251→        title: "Password reset successful",
+   252→        description: "You can now sign in with your new password.",
+   253→      })
+   254→      resetResetForm()
+   255→      resetForgotForm()
+   256→      resetSignInForm()
+   257→      setView("signin")
+   258→    } catch (err: unknown) {
+   259→      toast({
+   260→        title: "Reset failed",
+   261→        description: err instanceof Error ? err.message : "Failed to reset password",
+   262→        variant: "destructive",
+   263→      })
+   264→    } finally {
+   265→      setAuthLoading(false)
+   266→    }
+   267→  }
+   268→
+   269→  return (
+   270→    <div className="min-h-screen flex flex-col bg-gradient-to-br from-emerald-50/50 via-background to-amber-50/30 dark:from-emerald-950/20 dark:via-background dark:to-amber-950/10">
+   271→      <main className="flex-1 flex items-center justify-center px-4 py-8">
+   272→        <div className="w-full max-w-md">
+   273→          {/* Logo + Title */}
+   274→          <div className="flex flex-col items-center mb-8">
+   275→            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20 mb-4">
+   276→              <Wallet className="h-7 w-7" />
+   277→            </div>
+   278→            <h1 className="text-2xl font-bold tracking-tight">Finance Tracker</h1>
+   279→            <p className="text-sm text-muted-foreground mt-1">
+   280→              {view === "signin" && "Sign in to manage your finances"}
+   281→              {view === "signup" && "Create an account to get started"}
+   282→              {view === "forgot" && "Reset your password"}
+   283→              {view === "reset" && "Enter your new password"}
+   284→            </p>
+   285→          </div>
+   286→
+   287→          {/* ===== SIGN IN FORM ===== */}
+   288→          {view === "signin" && (
+   289→            <Card className="shadow-lg">
+   290→              <CardHeader className="pb-4">
+   291→                <CardTitle className="text-xl">Sign In</CardTitle>
+   292→                <CardDescription>Enter your credentials to access your account</CardDescription>
+   293→              </CardHeader>
+   294→              <CardContent>
+   295→                <form onSubmit={handleSignIn} className="space-y-4">
+   296→                  <div className="space-y-2">
+   297→                    <Label htmlFor="signin-email">Email</Label>
+   298→                    <div className="relative">
+   299→                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   300→                      <Input
+   301→                        id="signin-email"
+   302→                        type="email"
+   303→                        placeholder="you@example.com"
+   304→                        className="pl-9"
+   305→                        value={signinEmail}
+   306→                        onChange={(e) => setSigninEmail(e.target.value)}
+   307→                        required
+   308→                      />
+   309→                    </div>
+   310→                  </div>
+   311→                  <div className="space-y-2">
+   312→                    <Label htmlFor="signin-password">Password</Label>
+   313→                    <div className="relative">
+   314→                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   315→                      <Input
+   316→                        id="signin-password"
+   317→                        type={showSigninPassword ? "text" : "password"}
+   318→                        placeholder="Enter your password"
+   319→                        className="pl-9 pr-9"
+   320→                        value={signinPassword}
+   321→                        onChange={(e) => setSigninPassword(e.target.value)}
+   322→                        required
+   323→                      />
+   324→                      <Button
+   325→                        type="button"
+   326→                        variant="ghost"
+   327→                        size="icon"
+   328→                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+   329→                        onClick={() => setShowSigninPassword(!showSigninPassword)}
+   330→                      >
+   331→                        {showSigninPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+   332→                      </Button>
+   333→                    </div>
+   334→                  </div>
+   335→                  <Button
+   336→                    type="submit"
+   337→                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+   338→                    disabled={authLoading || !signinEmail.trim() || !signinPassword}
+   339→                  >
+   340→                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   341→                    Sign In
+   342→                  </Button>
+   343→                </form>
+   344→                <div className="mt-4 space-y-2 text-center">
+   345→                  <button
+   346→                    type="button"
+   347→                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+   348→                    onClick={() => { resetForgotForm(); setView("forgot") }}
+   349→                  >
+   350→                    Forgot your password?
+   351→                  </button>
+   352→                  <div className="text-sm text-muted-foreground">
+   353→                    Don&apos;t have an account?{" "}
+   354→                    <button
+   355→                      type="button"
+   356→                      className="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+   357→                      onClick={() => { resetSignUpForm(); setView("signup") }}
+   358→                    >
+   359→                      Sign up
+   360→                    </button>
+   361→                  </div>
+   362→                </div>
+   363→              </CardContent>
+   364→            </Card>
+   365→          )}
+   366→
+   367→          {/* ===== SIGN UP FORM ===== */}
+   368→          {view === "signup" && (
+   369→            <Card className="shadow-lg">
+   370→              <CardHeader className="pb-4">
+   371→                <CardTitle className="text-xl">Create Account</CardTitle>
+   372→                <CardDescription>Fill in your details to get started</CardDescription>
+   373→              </CardHeader>
+   374→              <CardContent>
+   375→                <form onSubmit={handleSignUp} className="space-y-4">
+   376→                  <div className="space-y-2">
+   377→                    <Label htmlFor="signup-name">Name</Label>
+   378→                    <div className="relative">
+   379→                      <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   380→                      <Input
+   381→                        id="signup-name"
+   382→                        type="text"
+   383→                        placeholder="Your name"
+   384→                        className="pl-9"
+   385→                        value={signupName}
+   386→                        onChange={(e) => setSignupName(e.target.value)}
+   387→                        required
+   388→                      />
+   389→                    </div>
+   390→                  </div>
+   391→                  <div className="space-y-2">
+   392→                    <Label htmlFor="signup-email">Email</Label>
+   393→                    <div className="relative">
+   394→                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   395→                      <Input
+   396→                        id="signup-email"
+   397→                        type="email"
+   398→                        placeholder="you@example.com"
+   399→                        className="pl-9"
+   400→                        value={signupEmail}
+   401→                        onChange={(e) => setSignupEmail(e.target.value)}
+   402→                        required
+   403→                      />
+   404→                    </div>
+   405→                  </div>
+   406→                  <div className="space-y-2">
+   407→                    <Label htmlFor="signup-password">Password</Label>
+   408→                    <div className="relative">
+   409→                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   410→                      <Input
+   411→                        id="signup-password"
+   412→                        type={showSignupPassword ? "text" : "password"}
+   413→                        placeholder="Min. 6 characters"
+   414→                        className="pl-9 pr-9"
+   415→                        value={signupPassword}
+   416→                        onChange={(e) => setSignupPassword(e.target.value)}
+   417→                        required
+   418→                        minLength={6}
+   419→                      />
+   420→                      <Button
+   421→                        type="button"
+   422→                        variant="ghost"
+   423→                        size="icon"
+   424→                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+   425→                        onClick={() => setShowSignupPassword(!showSignupPassword)}
+   426→                      >
+   427→                        {showSignupPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+   428→                      </Button>
+   429→                    </div>
+   430→                  </div>
+   431→                  <div className="space-y-2">
+   432→                    <Label htmlFor="signup-confirm-password">Confirm Password</Label>
+   433→                    <div className="relative">
+   434→                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   435→                      <Input
+   436→                        id="signup-confirm-password"
+   437→                        type={showSignupConfirmPassword ? "text" : "password"}
+   438→                        placeholder="Confirm your password"
+   439→                        className="pl-9 pr-9"
+   440→                        value={signupConfirmPassword}
+   441→                        onChange={(e) => setSignupConfirmPassword(e.target.value)}
+   442→                        required
+   443→                      />
+   444→                      <Button
+   445→                        type="button"
+   446→                        variant="ghost"
+   447→                        size="icon"
+   448→                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+   449→                        onClick={() => setShowSignupConfirmPassword(!showSignupConfirmPassword)}
+   450→                      >
+   451→                        {showSignupConfirmPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+   452→                      </Button>
+   453→                    </div>
+   454→                  </div>
+   455→                  <Button
+   456→                    type="submit"
+   457→                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+   458→                    disabled={authLoading || !signupName.trim() || !signupEmail.trim() || !signupPassword || !signupConfirmPassword}
+   459→                  >
+   460→                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   461→                    Create Account
+   462→                  </Button>
+   463→                </form>
+   464→                <div className="mt-4 text-center text-sm text-muted-foreground">
+   465→                  Already have an account?{" "}
+   466→                  <button
+   467→                    type="button"
+   468→                    className="text-emerald-600 hover:text-emerald-700 font-medium transition-colors"
+   469→                    onClick={() => { resetSignInForm(); setView("signin") }}
+   470→                  >
+   471→                    Sign in
+   472→                  </button>
+   473→                </div>
+   474→              </CardContent>
+   475→            </Card>
+   476→          )}
+   477→
+   478→          {/* ===== FORGOT PASSWORD FORM ===== */}
+   479→          {view === "forgot" && (
+   480→            <Card className="shadow-lg">
+   481→              <CardHeader className="pb-4">
+   482→                <CardTitle className="text-xl">Forgot Password</CardTitle>
+   483→                <CardDescription>Enter your email to receive a password reset token</CardDescription>
+   484→              </CardHeader>
+   485→              <CardContent>
+   486→                <form onSubmit={handleForgotPassword} className="space-y-4">
+   487→                  <div className="space-y-2">
+   488→                    <Label htmlFor="forgot-email">Email</Label>
+   489→                    <div className="relative">
+   490→                      <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   491→                      <Input
+   492→                        id="forgot-email"
+   493→                        type="email"
+   494→                        placeholder="you@example.com"
+   495→                        className="pl-9"
+   496→                        value={forgotEmail}
+   497→                        onChange={(e) => setForgotEmail(e.target.value)}
+   498→                        required
+   499→                      />
+   500→                    </div>
+   501→                  </div>
+   502→                  <Button
+   503→                    type="submit"
+   504→                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+   505→                    disabled={authLoading || !forgotEmail.trim()}
+   506→                  >
+   507→                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   508→                    Send Reset Link
+   509→                  </Button>
+   510→                </form>
+   511→                <div className="mt-4 text-center">
+   512→                  <button
+   513→                    type="button"
+   514→                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+   515→                    onClick={() => { resetSignInForm(); setView("signin") }}
+   516→                  >
+   517→                    Back to sign in
+   518→                  </button>
+   519→                </div>
+   520→              </CardContent>
+   521→            </Card>
+   522→          )}
+   523→
+   524→          {/* ===== RESET PASSWORD FORM ===== */}
+   525→          {view === "reset" && (
+   526→            <Card className="shadow-lg">
+   527→              <CardHeader className="pb-4">
+   528→                <CardTitle className="text-xl">Reset Password</CardTitle>
+   529→                <CardDescription>Enter the reset token and your new password</CardDescription>
+   530→              </CardHeader>
+   531→              <CardContent>
+   532→                <form onSubmit={handleResetPassword} className="space-y-4">
+   533→                  {resetToken && (
+   534→                    <Alert className="mb-2">
+   535→                      <KeyRound className="h-4 w-4" />
+   536→                      <AlertDescription className="break-all text-xs">
+   537→                        Your reset token: <code className="font-mono bg-muted px-1 py-0.5 rounded select-all">{resetToken}</code>
+   538→                      </AlertDescription>
+   539→                    </Alert>
+   540→                  )}
+   541→                  <div className="space-y-2">
+   542→                    <Label htmlFor="reset-token">Reset Token</Label>
+   543→                    <div className="relative">
+   544→                      <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   545→                      <Input
+   546→                        id="reset-token"
+   547→                        type="text"
+   548→                        placeholder="Paste your reset token"
+   549→                        className="pl-9"
+   550→                        value={resetToken}
+   551→                        onChange={(e) => setResetToken(e.target.value)}
+   552→                        required
+   553→                      />
+   554→                    </div>
+   555→                  </div>
+   556→                  <div className="space-y-2">
+   557→                    <Label htmlFor="reset-password">New Password</Label>
+   558→                    <div className="relative">
+   559→                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   560→                      <Input
+   561→                        id="reset-password"
+   562→                        type={showResetPassword ? "text" : "password"}
+   563→                        placeholder="Min. 6 characters"
+   564→                        className="pl-9 pr-9"
+   565→                        value={resetPassword}
+   566→                        onChange={(e) => setResetPassword(e.target.value)}
+   567→                        required
+   568→                        minLength={6}
+   569→                      />
+   570→                      <Button
+   571→                        type="button"
+   572→                        variant="ghost"
+   573→                        size="icon"
+   574→                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+   575→                        onClick={() => setShowResetPassword(!showResetPassword)}
+   576→                      >
+   577→                        {showResetPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+   578→                      </Button>
+   579→                    </div>
+   580→                  </div>
+   581→                  <div className="space-y-2">
+   582→                    <Label htmlFor="reset-confirm-password">Confirm New Password</Label>
+   583→                    <div className="relative">
+   584→                      <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+   585→                      <Input
+   586→                        id="reset-confirm-password"
+   587→                        type={showResetConfirmPassword ? "text" : "password"}
+   588→                        placeholder="Confirm your new password"
+   589→                        className="pl-9 pr-9"
+   590→                        value={resetConfirmPassword}
+   591→                        onChange={(e) => setResetConfirmPassword(e.target.value)}
+   592→                        required
+   593→                      />
+   594→                      <Button
+   595→                        type="button"
+   596→                        variant="ghost"
+   597→                        size="icon"
+   598→                        className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+   599→                        onClick={() => setShowResetConfirmPassword(!showResetConfirmPassword)}
+   600→                      >
+   601→                        {showResetConfirmPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+   602→                      </Button>
+   603→                    </div>
+   604→                  </div>
+   605→                  <Button
+   606→                    type="submit"
+   607→                    className="w-full bg-emerald-600 hover:bg-emerald-700"
+   608→                    disabled={authLoading || !resetToken || !resetPassword || !resetConfirmPassword}
+   609→                  >
+   610→                    {authLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+   611→                    Reset Password
+   612→                  </Button>
+   613→                </form>
+   614→                <div className="mt-4 text-center">
+   615→                  <button
+   616→                    type="button"
+   617→                    className="text-sm text-muted-foreground hover:text-emerald-600 transition-colors"
+   618→                    onClick={() => { resetResetForm(); resetForgotForm(); setView("signin") }}
+   619→                  >
+   620→                    Back to sign in
+   621→                  </button>
+   622→                </div>
+   623→              </CardContent>
+   624→            </Card>
+   625→          )}
+   626→        </div>
+   627→      </main>
+   628→
+   629→      {/* ===== FOOTER ===== */}
+   630→      <footer className="border-t mt-auto">
+   631→        <div className="container mx-auto flex h-12 items-center justify-center px-4 sm:px-6">
+   632→          <p className="text-xs text-muted-foreground">
+   633→            &copy; {new Date().getFullYear()} Finance Tracker. All rights reserved.
+   634→          </p>
+   635→        </div>
+   636→      </footer>
+   637→    </div>
+   638→  )
+   639→}
+   640→
+   641→// ============================================================
+   642→// FINANCE TRACKER COMPONENT (original app, shown when authenticated)
+   643→// ============================================================
+   644→function FinanceTracker() {
+   645→  const { toast } = useToast()
+   646→
+   647→  // --- Data state ---
+   648→  const [wallets, setWallets] = useState<WalletWithCount[]>([])
+   649→  const [incomeCategories, setIncomeCategories] = useState<CategoryWithCount[]>([])
+   650→  const [expenseCategories, setExpenseCategories] = useState<CategoryWithCount[]>([])
+   651→  const [recentTransactions, setRecentTransactions] = useState<TransactionResponse[]>([])
+   652→  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+   653→
+   654→  // --- Loading state ---
+   655→  const [loading, setLoading] = useState(true)
+   656→
+   657→  // --- Dialog states ---
+   658→  const [addWalletOpen, setAddWalletOpen] = useState(false)
+   659→  const [editWalletOpen, setEditWalletOpen] = useState(false)
+   660→  const [addIncomeCatOpen, setAddIncomeCatOpen] = useState(false)
+   661→  const [addExpenseCatOpen, setAddExpenseCatOpen] = useState(false)
+   662→  const [editCategoryOpen, setEditCategoryOpen] = useState(false)
+   663→  const [addTransactionOpen, setAddTransactionOpen] = useState(false)
+   664→
+   665→  // --- Form states ---
+   666→  const [walletName, setWalletName] = useState("")
+   667→  const [walletBalance, setWalletBalance] = useState("")
+   668→  const [editingWallet, setEditingWallet] = useState<WalletWithCount | null>(null)
+   669→  const [editWalletName, setEditWalletName] = useState("")
+   670→
+   671→  const [catName, setCatName] = useState("")
+   672→  const [catIcon, setCatIcon] = useState("")
+   673→  const [editingCategory, setEditingCategory] = useState<CategoryWithCount | null>(null)
+   674→  const [editCatName, setEditCatName] = useState("")
+   675→  const [editCatIcon, setEditCatIcon] = useState("")
+   676→
+   677→  const [txType, setTxType] = useState<"INCOME" | "EXPENSE">("EXPENSE")
+   678→  const [txAmount, setTxAmount] = useState("")
+   679→  const [txWalletId, setTxWalletId] = useState("")
+   680→  const [txCategoryId, setTxCategoryId] = useState("")
+   681→  const [txDate, setTxDate] = useState<Date>(new Date())
+   682→  const [txDescription, setTxDescription] = useState("")
+   683→
+   684→  const [submitting, setSubmitting] = useState(false)
+   685→
+   686→  // --- Fetch functions ---
+   687→  const fetchWallets = useCallback(async () => {
+   688→    try {
+   689→      const data = await walletApi.list()
+   690→      setWallets(data)
+   691→    } catch {
+   692→      // silent
+   693→    }
+   694→  }, [])
+   695→
+   696→  const fetchCategories = useCallback(async () => {
+   697→    try {
+   698→      const [income, expense] = await Promise.all([
+   699→        categoryApi.list("INCOME"),
+   700→        categoryApi.list("EXPENSE"),
+   701→      ])
+   702→      setIncomeCategories(income)
+   703→      setExpenseCategories(expense)
+   704→    } catch {
+   705→      // silent
+   706→    }
+   707→  }, [])
+   708→
+   709→  const fetchDashboard = useCallback(async () => {
+   710→    try {
+   711→      const summary = await dashboardApi.summary()
+   712→      setDashboardSummary(summary)
+   713→    } catch {
+   714→      // silent
+   715→    }
+   716→  }, [])
+   717→
+   718→  const fetchRecentTransactions = useCallback(async () => {
+   719→    try {
+   720→      const result = await dashboardApi.search({ page: "1", pageSize: "5" })
+   721→      setRecentTransactions(result.data)
+   722→    } catch {
+   723→      // silent
+   724→    }
+   725→  }, [])
+   726→
+   727→  const refreshAll = useCallback(async () => {
+   728→    setLoading(true)
+   729→    await Promise.all([
+   730→      fetchWallets(),
+   731→      fetchCategories(),
+   732→      fetchDashboard(),
+   733→      fetchRecentTransactions(),
+   734→    ])
+   735→    setLoading(false)
+   736→  }, [fetchWallets, fetchCategories, fetchDashboard, fetchRecentTransactions])
+   737→
+   738→  useEffect(() => {
+   739→    refreshAll()
+   740→  }, [refreshAll])
+   741→
+   742→  // --- Wallet handlers ---
+   743→  const handleCreateWallet = async () => {
+   744→    if (!walletName.trim()) return
+   745→    setSubmitting(true)
+   746→    try {
+   747→      await walletApi.create({ name: walletName.trim(), balance: walletBalance ? parseFloat(walletBalance) : 0 })
+   748→      toast({ title: "Wallet created", description: `"${walletName}" has been added.` })
+   749→      setWalletName("")
+   750→      setWalletBalance("")
+   751→      setAddWalletOpen(false)
+   752→      await refreshAll()
+   753→    } catch (err: unknown) {
+   754→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create wallet", variant: "destructive" })
+   755→    } finally {
+   756→      setSubmitting(false)
+   757→    }
+   758→  }
+   759→
+   760→  const handleUpdateWallet = async () => {
+   761→    if (!editingWallet || !editWalletName.trim()) return
+   762→    setSubmitting(true)
+   763→    try {
+   764→      await walletApi.update(editingWallet.id, { name: editWalletName.trim() })
+   765→      toast({ title: "Wallet updated", description: `Wallet renamed to "${editWalletName}".` })
+   766→      setEditWalletOpen(false)
+   767→      setEditingWallet(null)
+   768→      await refreshAll()
+   769→    } catch (err: unknown) {
+   770→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update wallet", variant: "destructive" })
+   771→    } finally {
+   772→      setSubmitting(false)
+   773→    }
+   774→  }
+   775→
+   776→  const handleDeleteWallet = async (id: string, name: string) => {
+   777→    try {
+   778→      await walletApi.delete(id)
+   779→      toast({ title: "Wallet deleted", description: `"${name}" has been removed.` })
+   780→      await refreshAll()
+   781→    } catch (err: unknown) {
+   782→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete wallet", variant: "destructive" })
+   783→    }
+   784→  }
+   785→
+   786→  // --- Category handlers ---
+   787→  const handleCreateCategory = async (type: "INCOME" | "EXPENSE") => {
+   788→    if (!catName.trim()) return
+   789→    setSubmitting(true)
+   790→    try {
+   791→      await categoryApi.create({ name: catName.trim(), type, icon: catIcon.trim() || undefined })
+   792→      toast({ title: "Category created", description: `"${catName}" has been added.` })
+   793→      setCatName("")
+   794→      setCatIcon("")
+   795→      if (type === "INCOME") setAddIncomeCatOpen(false)
+   796→      else setAddExpenseCatOpen(false)
+   797→      await refreshAll()
+   798→    } catch (err: unknown) {
+   799→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create category", variant: "destructive" })
+   800→    } finally {
+   801→      setSubmitting(false)
+   802→    }
+   803→  }
+   804→
+   805→  const handleUpdateCategory = async () => {
+   806→    if (!editingCategory) return
+   807→    setSubmitting(true)
+   808→    try {
+   809→      await categoryApi.update(editingCategory.id, {
+   810→        name: editCatName.trim() || undefined,
+   811→        icon: editCatIcon.trim() || undefined,
+   812→      })
+   813→      toast({ title: "Category updated", description: `"${editCatName}" has been updated.` })
+   814→      setEditCategoryOpen(false)
+   815→      setEditingCategory(null)
+   816→      await refreshAll()
+   817→    } catch (err: unknown) {
+   818→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to update category", variant: "destructive" })
+   819→    } finally {
+   820→      setSubmitting(false)
+   821→    }
+   822→  }
+   823→
+   824→  const handleDeleteCategory = async (id: string, name: string) => {
+   825→    try {
+   826→      await categoryApi.delete(id)
+   827→      toast({ title: "Category deleted", description: `"${name}" has been removed.` })
+   828→      await refreshAll()
+   829→    } catch (err: unknown) {
+   830→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to delete category", variant: "destructive" })
+   831→    }
+   832→  }
+   833→
+   834→  // --- Transaction handler ---
+   835→  const handleCreateTransaction = async () => {
+   836→    if (!txAmount || !txWalletId || !txCategoryId || !txDate) return
+   837→    setSubmitting(true)
+   838→    try {
+   839→      await transactionApi.create({
+   840→        amount: parseFloat(txAmount),
+   841→        type: txType,
+   842→        description: txDescription.trim() || undefined,
+   843→        transactionDate: format(txDate, "yyyy-MM-dd"),
+   844→        walletId: txWalletId,
+   845→        categoryId: txCategoryId,
+   846→      })
+   847→      toast({
+   848→        title: "Transaction added",
+   849→        description: `${txType === "INCOME" ? "Income" : "Expense"} of ${formatCurrency(parseFloat(txAmount))} recorded.`,
+   850→      })
+   851→      setTxType("EXPENSE")
+   852→      setTxAmount("")
+   853→      setTxWalletId("")
+   854→      setTxCategoryId("")
+   855→      setTxDate(new Date())
+   856→      setTxDescription("")
+   857→      setAddTransactionOpen(false)
+   858→      await refreshAll()
+   859→    } catch (err: unknown) {
+   860→      toast({ title: "Error", description: err instanceof Error ? err.message : "Failed to create transaction", variant: "destructive" })
+   861→    } finally {
+   862→      setSubmitting(false)
+   863→    }
+   864→  }
+   865→
+   866→  // --- Available icon names for category creation ---
+   867→  const availableIcons = [
+   868→    "UtensilsCrossed", "Car", "ShoppingBag", "Gamepad2", "Receipt",
+   869→    "Heart", "GraduationCap", "Home", "Shield", "MoreHorizontal",
+   870→    "Briefcase", "Laptop", "Gift", "TrendingUp", "DollarSign",
+   871→    "CircleDollarSign", "Tag",
+   872→  ]
+   873→
+   874→  // ============================================================
+   875→  // RENDER
+   876→  // ============================================================
+   877→  return (
+   878→    <div className="container mx-auto px-4 sm:px-6 py-6">
+   879→        <Tabs defaultValue="dashboard" className="w-full">
+   880→          <TabsList className="grid w-full grid-cols-3 mb-6">
+   881→            <TabsTrigger value="dashboard" className="gap-1.5">
+   882→              <LayoutDashboard className="h-4 w-4 hidden sm:block" />
+   883→              Dashboard
+   884→            </TabsTrigger>
+   885→            <TabsTrigger value="wallets" className="gap-1.5">
+   886→              <WalletIcon className="h-4 w-4 hidden sm:block" />
+   887→              Wallets
+   888→            </TabsTrigger>
+   889→            <TabsTrigger value="categories" className="gap-1.5">
+   890→              <Tag className="h-4 w-4 hidden sm:block" />
+   891→              Categories
+   892→            </TabsTrigger>
+   893→          </TabsList>
+   894→
+   895→          {/* ========== DASHBOARD TAB ========== */}
+   896→          <TabsContent value="dashboard" className="space-y-6">
+   897→            {loading ? (
+   898→              <div className="flex items-center justify-center py-20">
+   899→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+   900→              </div>
+   901→            ) : (
+   902→              <>
+   903→                {/* Summary Cards */}
+   904→                <div className="grid gap-4 sm:grid-cols-3">
+   905→                  {/* Total Balance */}
+   906→                  <Card className="border-amber-200 bg-amber-50/50 dark:border-amber-900 dark:bg-amber-950/20">
+   907→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   908→                      <CardTitle className="text-sm font-medium text-amber-700 dark:text-amber-400">
+   909→                        Total Balance
+   910→                      </CardTitle>
+   911→                      <DollarSign className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+   912→                    </CardHeader>
+   913→                    <CardContent>
+   914→                      <div className="text-2xl font-bold text-amber-900 dark:text-amber-200">
+   915→                        {formatCurrency(dashboardSummary?.netBalance ?? 0)}
+   916→                      </div>
+   917→                      <p className="text-xs text-amber-600/70 dark:text-amber-400/70 mt-1">
+   918→                        Across {dashboardSummary?.walletCount ?? 0} wallet{dashboardSummary?.walletCount !== 1 ? "s" : ""}
+   919→                      </p>
+   920→                    </CardContent>
+   921→                  </Card>
+   922→
+   923→                  {/* Total Income */}
+   924→                  <Card className="border-emerald-200 bg-emerald-50/50 dark:border-emerald-900 dark:bg-emerald-950/20">
+   925→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   926→                      <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+   927→                        Total Income
+   928→                      </CardTitle>
+   929→                      <ArrowUpRight className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+   930→                    </CardHeader>
+   931→                    <CardContent>
+   932→                      <div className="text-2xl font-bold text-emerald-900 dark:text-emerald-200">
+   933→                        {formatCurrency(dashboardSummary?.totalIncome ?? 0)}
+   934→                      </div>
+   935→                      <p className="text-xs text-emerald-600/70 dark:text-emerald-400/70 mt-1">
+   936→                        All time income
+   937→                      </p>
+   938→                    </CardContent>
+   939→                  </Card>
+   940→
+   941→                  {/* Total Expense */}
+   942→                  <Card className="border-rose-200 bg-rose-50/50 dark:border-rose-900 dark:bg-rose-950/20">
+   943→                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+   944→                      <CardTitle className="text-sm font-medium text-rose-700 dark:text-rose-400">
+   945→                        Total Expense
+   946→                      </CardTitle>
+   947→                      <ArrowDownRight className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+   948→                    </CardHeader>
+   949→                    <CardContent>
+   950→                      <div className="text-2xl font-bold text-rose-900 dark:text-rose-200">
+   951→                        {formatCurrency(dashboardSummary?.totalExpense ?? 0)}
+   952→                      </div>
+   953→                      <p className="text-xs text-rose-600/70 dark:text-rose-400/70 mt-1">
+   954→                        All time expenses
+   955→                      </p>
+   956→                    </CardContent>
+   957→                  </Card>
+   958→                </div>
+   959→
+   960→                {/* Quick Add Transaction + Recent Transactions */}
+   961→                <div className="flex items-center justify-between">
+   962→                  <h2 className="text-lg font-semibold">Recent Transactions</h2>
+   963→                  <Dialog open={addTransactionOpen} onOpenChange={setAddTransactionOpen}>
+   964→                    <DialogTrigger asChild>
+   965→                      <Button className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+   966→                        <CirclePlus className="h-4 w-4" />
+   967→                        Add Transaction
+   968→                      </Button>
+   969→                    </DialogTrigger>
+   970→                    <DialogContent className="sm:max-w-[480px]">
+   971→                      <DialogHeader>
+   972→                        <DialogTitle>Add Transaction</DialogTitle>
+   973→                        <DialogDescription>Record a new income or expense transaction.</DialogDescription>
+   974→                      </DialogHeader>
+   975→                      <div className="grid gap-4 py-4">
+   976→                        {/* Type Toggle */}
+   977→                        <div className="grid gap-2">
+   978→                          <Label>Type</Label>
+   979→                          <div className="flex gap-2">
+   980→                            <Button
+   981→                              type="button"
+   982→                              variant={txType === "INCOME" ? "default" : "outline"}
+   983→                              className={txType === "INCOME" ? "bg-emerald-600 hover:bg-emerald-700 flex-1" : "flex-1"}
+   984→                              onClick={() => { setTxType("INCOME"); setTxCategoryId("") }}
+   985→                            >
+   986→                              <TrendingUp className="h-4 w-4 mr-1.5" />
+   987→                              Income
+   988→                            </Button>
+   989→                            <Button
+   990→                              type="button"
+   991→                              variant={txType === "EXPENSE" ? "default" : "outline"}
+   992→                              className={txType === "EXPENSE" ? "bg-rose-600 hover:bg-rose-700 flex-1" : "flex-1"}
+   993→                              onClick={() => { setTxType("EXPENSE"); setTxCategoryId("") }}
+   994→                            >
+   995→                              <TrendingDown className="h-4 w-4 mr-1.5" />
+   996→                              Expense
+   997→                            </Button>
+   998→                          </div>
+   999→                        </div>
+  1000→
+  1001→                        {/* Amount */}
+  1002→                        <div className="grid gap-2">
+  1003→                          <Label htmlFor="tx-amount">Amount</Label>
+  1004→                          <div className="relative">
+  1005→                            <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+  1006→                            <Input
+  1007→                              id="tx-amount"
+  1008→                              type="number"
+  1009→                              step="0.01"
+  1010→                              min="0"
+  1011→                              placeholder="0.00"
+  1012→                              className="pl-9"
+  1013→                              value={txAmount}
+  1014→                              onChange={(e) => setTxAmount(e.target.value)}
+  1015→                            />
+  1016→                          </div>
+  1017→                        </div>
+  1018→
+  1019→                        {/* Wallet Selector */}
+  1020→                        <div className="grid gap-2">
+  1021→                          <Label>Wallet</Label>
+  1022→                          <Select value={txWalletId} onValueChange={setTxWalletId}>
+  1023→                            <SelectTrigger>
+  1024→                              <SelectValue placeholder="Select a wallet" />
+  1025→                            </SelectTrigger>
+  1026→                            <SelectContent>
+  1027→                              {wallets.length === 0 ? (
+  1028→                                <div className="px-2 py-1.5 text-sm text-muted-foreground">No wallets available</div>
+  1029→                              ) : (
+  1030→                                wallets.map((w) => (
+  1031→                                  <SelectItem key={w.id} value={w.id}>
+  1032→                                    {w.name} ({formatCurrency(w.balance)})
+  1033→                                  </SelectItem>
+  1034→                                ))
+  1035→                              )}
+  1036→                            </SelectContent>
+  1037→                          </Select>
+  1038→                        </div>
+  1039→
+  1040→                        {/* Category Selector */}
+  1041→                        <div className="grid gap-2">
+  1042→                          <Label>Category</Label>
+  1043→                          <Select value={txCategoryId} onValueChange={setTxCategoryId}>
+  1044→                            <SelectTrigger>
+  1045→                              <SelectValue placeholder="Select a category" />
+  1046→                            </SelectTrigger>
+  1047→                            <SelectContent>
+  1048→                              {(txType === "INCOME" ? incomeCategories : expenseCategories).length === 0 ? (
+  1049→                                <div className="px-2 py-1.5 text-sm text-muted-foreground">
+  1050→                                  No {txType.toLowerCase()} categories available
+  1051→                                </div>
+  1052→                              ) : (
+  1053→                                (txType === "INCOME" ? incomeCategories : expenseCategories).map((c) => {
+  1054→                                  const IconComp = getIcon(c.icon)
+  1055→                                  return (
+  1056→                                    <SelectItem key={c.id} value={c.id}>
+  1057→                                      <span className="flex items-center gap-2">
+  1058→                                        <IconComp className="h-3.5 w-3.5" />
+  1059→                                        {c.name}
+  1060→                                      </span>
+  1061→                                    </SelectItem>
+  1062→                                  )
+  1063→                                })
+  1064→                              )}
+  1065→                            </SelectContent>
+  1066→                          </Select>
+  1067→                        </div>
+  1068→
+  1069→                        {/* Date Picker */}
+  1070→                        <div className="grid gap-2">
+  1071→                          <Label>Date</Label>
+  1072→                          <Popover>
+  1073→                            <PopoverTrigger asChild>
+  1074→                              <Button
+  1075→                                variant="outline"
+  1076→                                className="justify-start text-left font-normal"
+  1077→                              >
+  1078→                                <CalendarDays className="mr-2 h-4 w-4" />
+  1079→                                {txDate ? format(txDate, "PPP") : "Pick a date"}
+  1080→                              </Button>
+  1081→                            </PopoverTrigger>
+  1082→                            <PopoverContent className="w-auto p-0" align="start">
+  1083→                              <Calendar
+  1084→                                mode="single"
+  1085→                                selected={txDate}
+  1086→                                onSelect={(d) => d && setTxDate(d)}
+  1087→                                initialFocus
+  1088→                              />
+  1089→                            </PopoverContent>
+  1090→                          </Popover>
+  1091→                        </div>
+  1092→
+  1093→                        {/* Description */}
+  1094→                        <div className="grid gap-2">
+  1095→                          <Label htmlFor="tx-desc">Description (optional)</Label>
+  1096→                          <Input
+  1097→                            id="tx-desc"
+  1098→                            placeholder="What was this transaction for?"
+  1099→                            value={txDescription}
+  1100→                            onChange={(e) => setTxDescription(e.target.value)}
+  1101→                          />
+  1102→                        </div>
+  1103→                      </div>
+  1104→                      <DialogFooter>
+  1105→                        <Button variant="outline" onClick={() => setAddTransactionOpen(false)}>
+  1106→                          Cancel
+  1107→                        </Button>
+  1108→                        <Button
+  1109→                          onClick={handleCreateTransaction}
+  1110→                          disabled={submitting || !txAmount || !txWalletId || !txCategoryId}
+  1111→                          className={txType === "INCOME" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}
+  1112→                        >
+  1113→                          {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1114→                          Add {txType === "INCOME" ? "Income" : "Expense"}
+  1115→                        </Button>
+  1116→                      </DialogFooter>
+  1117→                    </DialogContent>
+  1118→                  </Dialog>
+  1119→                </div>
+  1120→
+  1121→                <Separator />
+  1122→
+  1123→                {/* Recent Transactions List */}
+  1124→                {recentTransactions.length === 0 ? (
+  1125→                  <Card className="border-dashed">
+  1126→                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+  1127→                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+  1128→                        <Receipt className="h-6 w-6 text-muted-foreground" />
+  1129→                      </div>
+  1130→                      <h3 className="text-sm font-medium">No transactions yet</h3>
+  1131→                      <p className="text-sm text-muted-foreground mt-1">
+  1132→                        Start by adding your first transaction to track your finances.
+  1133→                      </p>
+  1134→                      <Button
+  1135→                        className="mt-4 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+  1136→                        onClick={() => setAddTransactionOpen(true)}
+  1137→                      >
+  1138→                        <CirclePlus className="h-4 w-4" />
+  1139→                        Add Transaction
+  1140→                      </Button>
+  1141→                    </CardContent>
+  1142→                  </Card>
+  1143→                ) : (
+  1144→                  <div className="space-y-3">
+  1145→                    {recentTransactions.map((tx) => {
+  1146→                      const isIncome = tx.type === "INCOME"
+  1147→                      const IconComp = getIcon(tx.categoryIcon)
+  1148→                      return (
+  1149→                        <Card key={tx.id} className="hover:shadow-sm transition-shadow">
+  1150→                          <CardContent className="flex items-center gap-4 p-4">
+  1151→                            <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${
+  1152→                              isIncome
+  1153→                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400"
+  1154→                                : "bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400"
+  1155→                            }`}>
+  1156→                              <IconComp className="h-5 w-5" />
+  1157→                            </div>
+  1158→                            <div className="flex-1 min-w-0">
+  1159→                              <div className="flex items-center gap-2">
+  1160→                                <span className="font-medium text-sm truncate">{tx.categoryName}</span>
+  1161→                                <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${
+  1162→                                  isIncome
+  1163→                                    ? "border-emerald-300 text-emerald-700 dark:border-emerald-700 dark:text-emerald-400"
+  1164→                                    : "border-rose-300 text-rose-700 dark:border-rose-700 dark:text-rose-400"
+  1165→                                }`}>
+  1166→                                  {isIncome ? "Income" : "Expense"}
+  1167→                                </Badge>
+  1168→                              </div>
+  1169→                              <p className="text-xs text-muted-foreground truncate mt-0.5">
+  1170→                                {tx.description || tx.walletName} &middot; {tx.transactionDate}
+  1171→                              </p>
+  1172→                            </div>
+  1173→                            <div className={`text-sm font-semibold shrink-0 ${
+  1174→                              isIncome ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"
+  1175→                            }`}>
+  1176→                              {isIncome ? "+" : "-"}{formatCurrency(tx.amount)}
+  1177→                            </div>
+  1178→                          </CardContent>
+  1179→                        </Card>
+  1180→                      )
+  1181→                    })}
+  1182→                  </div>
+  1183→                )}
+  1184→
+  1185→                {/* Dashboard empty state - no wallets */}
+  1186→                {wallets.length === 0 && (
+  1187→                  <Card className="border-dashed mt-6">
+  1188→                    <CardContent className="flex flex-col items-center justify-center py-12 text-center">
+  1189→                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
+  1190→                        <Wallet className="h-6 w-6 text-muted-foreground" />
+  1191→                      </div>
+  1192→                      <h3 className="text-sm font-medium">No wallets yet</h3>
+  1193→                      <p className="text-sm text-muted-foreground mt-1">
+  1194→                        Create your first wallet to start tracking your finances.
+  1195→                      </p>
+  1196→                    </CardContent>
+  1197→                  </Card>
+  1198→                )}
+  1199→              </>
+  1200→            )}
+  1201→          </TabsContent>
+  1202→
+  1203→          {/* ========== WALLETS TAB ========== */}
+  1204→          <TabsContent value="wallets" className="space-y-6">
+  1205→            <div className="flex items-center justify-between">
+  1206→              <h2 className="text-lg font-semibold">Your Wallets</h2>
+  1207→              <Dialog open={addWalletOpen} onOpenChange={setAddWalletOpen}>
+  1208→                <DialogTrigger asChild>
+  1209→                  <Button className="gap-1.5 bg-emerald-600 hover:bg-emerald-700">
+  1210→                    <Plus className="h-4 w-4" />
+  1211→                    Add Wallet
+  1212→                  </Button>
+  1213→                </DialogTrigger>
+  1214→                <DialogContent className="sm:max-w-[400px]">
+  1215→                  <DialogHeader>
+  1216→                    <DialogTitle>Create Wallet</DialogTitle>
+  1217→                    <DialogDescription>Add a new wallet to track your finances.</DialogDescription>
+  1218→                  </DialogHeader>
+  1219→                  <div className="grid gap-4 py-4">
+  1220→                    <div className="grid gap-2">
+  1221→                      <Label htmlFor="wallet-name">Wallet Name</Label>
+  1222→                      <Input
+  1223→                        id="wallet-name"
+  1224→                        placeholder="e.g. Main Account"
+  1225→                        value={walletName}
+  1226→                        onChange={(e) => setWalletName(e.target.value)}
+  1227→                      />
+  1228→                    </div>
+  1229→                    <div className="grid gap-2">
+  1230→                      <Label htmlFor="wallet-balance">Initial Balance</Label>
+  1231→                      <div className="relative">
+  1232→                        <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+  1233→                        <Input
+  1234→                          id="wallet-balance"
+  1235→                          type="number"
+  1236→                          step="0.01"
+  1237→                          min="0"
+  1238→                          placeholder="0.00"
+  1239→                          className="pl-9"
+  1240→                          value={walletBalance}
+  1241→                          onChange={(e) => setWalletBalance(e.target.value)}
+  1242→                        />
+  1243→                      </div>
+  1244→                    </div>
+  1245→                  </div>
+  1246→                  <DialogFooter>
+  1247→                    <Button variant="outline" onClick={() => setAddWalletOpen(false)}>Cancel</Button>
+  1248→                    <Button
+  1249→                      onClick={handleCreateWallet}
+  1250→                      disabled={submitting || !walletName.trim()}
+  1251→                      className="bg-emerald-600 hover:bg-emerald-700"
+  1252→                    >
+  1253→                      {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1254→                      Create Wallet
+  1255→                    </Button>
+  1256→                  </DialogFooter>
+  1257→                </DialogContent>
+  1258→              </Dialog>
+  1259→            </div>
+  1260→
+  1261→            {loading ? (
+  1262→              <div className="flex items-center justify-center py-20">
+  1263→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+  1264→              </div>
+  1265→            ) : wallets.length === 0 ? (
+  1266→              <Card className="border-dashed">
+  1267→                <CardContent className="flex flex-col items-center justify-center py-16 text-center">
+  1268→                  <div className="flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950 mb-4">
+  1269→                    <Wallet className="h-8 w-8 text-amber-600 dark:text-amber-400" />
+  1270→                  </div>
+  1271→                  <h3 className="text-base font-semibold">No wallets yet</h3>
+  1272→                  <p className="text-sm text-muted-foreground mt-1 max-w-sm">
+  1273→                    Add your first wallet to start tracking your balance, income, and expenses.
+  1274→                  </p>
+  1275→                  <Button
+  1276→                    className="mt-4 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+  1277→                    onClick={() => setAddWalletOpen(true)}
+  1278→                  >
+  1279→                    <Plus className="h-4 w-4" />
+  1280→                    Add your first wallet
+  1281→                  </Button>
+  1282→                </CardContent>
+  1283→              </Card>
+  1284→            ) : (
+  1285→              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  1286→                {wallets.map((wallet) => (
+  1287→                  <Card key={wallet.id} className="hover:shadow-md transition-shadow group">
+  1288→                    <CardHeader className="pb-3">
+  1289→                      <div className="flex items-start justify-between">
+  1290→                        <div className="flex items-center gap-2">
+  1291→                          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-100 dark:bg-amber-950">
+  1292→                            <Wallet className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+  1293→                          </div>
+  1294→                          <div>
+  1295→                            <CardTitle className="text-base">{wallet.name}</CardTitle>
+  1296→                            <CardDescription className="text-xs">
+  1297→                              {wallet.transactionCount} transaction{wallet.transactionCount !== 1 ? "s" : ""}
+  1298→                            </CardDescription>
+  1299→                          </div>
+  1300→                        </div>
+  1301→                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+  1302→                          <Button
+  1303→                            variant="ghost"
+  1304→                            size="icon"
+  1305→                            className="h-8 w-8"
+  1306→                            onClick={() => {
+  1307→                              setEditingWallet(wallet)
+  1308→                              setEditWalletName(wallet.name)
+  1309→                              setEditWalletOpen(true)
+  1310→                            }}
+  1311→                          >
+  1312→                            <Pencil className="h-3.5 w-3.5" />
+  1313→                          </Button>
+  1314→                          <Button
+  1315→                            variant="ghost"
+  1316→                            size="icon"
+  1317→                            className="h-8 w-8 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+  1318→                            onClick={() => handleDeleteWallet(wallet.id, wallet.name)}
+  1319→                          >
+  1320→                            <Trash2 className="h-3.5 w-3.5" />
+  1321→                          </Button>
+  1322→                        </div>
+  1323→                      </div>
+  1324→                    </CardHeader>
+  1325→                    <CardContent>
+  1326→                      <div className="text-2xl font-bold text-amber-900 dark:text-amber-200">
+  1327→                        {formatCurrency(wallet.balance)}
+  1328→                      </div>
+  1329→                    </CardContent>
+  1330→                  </Card>
+  1331→                ))}
+  1332→              </div>
+  1333→            )}
+  1334→
+  1335→            {/* Edit Wallet Dialog */}
+  1336→            <Dialog open={editWalletOpen} onOpenChange={setEditWalletOpen}>
+  1337→              <DialogContent className="sm:max-w-[400px]">
+  1338→                <DialogHeader>
+  1339→                  <DialogTitle>Edit Wallet</DialogTitle>
+  1340→                  <DialogDescription>Change the name of your wallet.</DialogDescription>
+  1341→                </DialogHeader>
+  1342→                <div className="grid gap-4 py-4">
+  1343→                  <div className="grid gap-2">
+  1344→                    <Label htmlFor="edit-wallet-name">Wallet Name</Label>
+  1345→                    <Input
+  1346→                      id="edit-wallet-name"
+  1347→                      value={editWalletName}
+  1348→                      onChange={(e) => setEditWalletName(e.target.value)}
+  1349→                    />
+  1350→                  </div>
+  1351→                </div>
+  1352→                <DialogFooter>
+  1353→                  <Button variant="outline" onClick={() => setEditWalletOpen(false)}>Cancel</Button>
+  1354→                  <Button
+  1355→                    onClick={handleUpdateWallet}
+  1356→                    disabled={submitting || !editWalletName.trim()}
+  1357→                    className="bg-emerald-600 hover:bg-emerald-700"
+  1358→                  >
+  1359→                    {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1360→                    Save Changes
+  1361→                  </Button>
+  1362→                </DialogFooter>
+  1363→              </DialogContent>
+  1364→            </Dialog>
+  1365→          </TabsContent>
+  1366→
+  1367→          {/* ========== CATEGORIES TAB ========== */}
+  1368→          <TabsContent value="categories" className="space-y-6">
+  1369→            {loading ? (
+  1370→              <div className="flex items-center justify-center py-20">
+  1371→                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+  1372→              </div>
+  1373→            ) : (
+  1374→              <div className="grid gap-6 lg:grid-cols-2">
+  1375→                {/* Income Categories */}
+  1376→                <div className="space-y-4">
+  1377→                  <div className="flex items-center justify-between">
+  1378→                    <div className="flex items-center gap-2">
+  1379→                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-950">
+  1380→                        <TrendingUp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+  1381→                      </div>
+  1382→                      <h3 className="text-base font-semibold">Income Categories</h3>
+  1383→                    </div>
+  1384→                    <Dialog open={addIncomeCatOpen} onOpenChange={setAddIncomeCatOpen}>
+  1385→                      <DialogTrigger asChild>
+  1386→                        <Button variant="outline" size="sm" className="gap-1">
+  1387→                          <Plus className="h-3.5 w-3.5" />
+  1388→                          Add
+  1389→                        </Button>
+  1390→                      </DialogTrigger>
+  1391→                      <DialogContent className="sm:max-w-[400px]">
+  1392→                        <DialogHeader>
+  1393→                          <DialogTitle>Add Income Category</DialogTitle>
+  1394→                          <DialogDescription>Create a new income category.</DialogDescription>
+  1395→                        </DialogHeader>
+  1396→                        <div className="grid gap-4 py-4">
+  1397→                          <div className="grid gap-2">
+  1398→                            <Label htmlFor="inc-cat-name">Name</Label>
+  1399→                            <Input
+  1400→                              id="inc-cat-name"
+  1401→                              placeholder="e.g. Dividends"
+  1402→                              value={catName}
+  1403→                              onChange={(e) => setCatName(e.target.value)}
+  1404→                            />
+  1405→                          </div>
+  1406→                          <div className="grid gap-2">
+  1407→                            <Label>Icon</Label>
+  1408→                            <Select value={catIcon} onValueChange={setCatIcon}>
+  1409→                              <SelectTrigger>
+  1410→                                <SelectValue placeholder="Choose an icon" />
+  1411→                              </SelectTrigger>
+  1412→                              <SelectContent>
+  1413→                                {availableIcons.map((icon) => {
+  1414→                                  const IconComp = getIcon(icon)
+  1415→                                  return (
+  1416→                                    <SelectItem key={icon} value={icon}>
+  1417→                                      <span className="flex items-center gap-2">
+  1418→                                        <IconComp className="h-3.5 w-3.5" />
+  1419→                                        {icon}
+  1420→                                      </span>
+  1421→                                    </SelectItem>
+  1422→                                  )
+  1423→                                })}
+  1424→                              </SelectContent>
+  1425→                            </Select>
+  1426→                          </div>
+  1427→                        </div>
+  1428→                        <DialogFooter>
+  1429→                          <Button variant="outline" onClick={() => setAddIncomeCatOpen(false)}>Cancel</Button>
+  1430→                          <Button
+  1431→                            onClick={() => handleCreateCategory("INCOME")}
+  1432→                            disabled={submitting || !catName.trim()}
+  1433→                            className="bg-emerald-600 hover:bg-emerald-700"
+  1434→                          >
+  1435→                            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1436→                            Add Category
+  1437→                          </Button>
+  1438→                        </DialogFooter>
+  1439→                      </DialogContent>
+  1440→                    </Dialog>
+  1441→                  </div>
+  1442→
+  1443→                  {incomeCategories.length === 0 ? (
+  1444→                    <Card className="border-dashed">
+  1445→                      <CardContent className="flex flex-col items-center py-8 text-center">
+  1446→                        <p className="text-sm text-muted-foreground">No income categories yet.</p>
+  1447→                      </CardContent>
+  1448→                    </Card>
+  1449→                  ) : (
+  1450→                    <div className="space-y-2">
+  1451→                      {incomeCategories.map((cat) => {
+  1452→                        const IconComp = getIcon(cat.icon)
+  1453→                        return (
+  1454→                          <Card key={cat.id} className="hover:shadow-sm transition-shadow group">
+  1455→                            <CardContent className="flex items-center gap-3 p-3">
+  1456→                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 dark:bg-emerald-950">
+  1457→                                <IconComp className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+  1458→                              </div>
+  1459→                              <div className="flex-1 min-w-0">
+  1460→                                <span className="font-medium text-sm">{cat.name}</span>
+  1461→                                <p className="text-xs text-muted-foreground">
+  1462→                                  {cat.transactionCount} transaction{cat.transactionCount !== 1 ? "s" : ""}
+  1463→                                </p>
+  1464→                              </div>
+  1465→                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+  1466→                                <Button
+  1467→                                  variant="ghost"
+  1468→                                  size="icon"
+  1469→                                  className="h-7 w-7"
+  1470→                                  onClick={() => {
+  1471→                                    setEditingCategory(cat)
+  1472→                                    setEditCatName(cat.name)
+  1473→                                    setEditCatIcon(cat.icon || "")
+  1474→                                    setEditCategoryOpen(true)
+  1475→                                  }}
+  1476→                                >
+  1477→                                  <Pencil className="h-3 w-3" />
+  1478→                                </Button>
+  1479→                                <Button
+  1480→                                  variant="ghost"
+  1481→                                  size="icon"
+  1482→                                  className="h-7 w-7 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+  1483→                                  onClick={() => handleDeleteCategory(cat.id, cat.name)}
+  1484→                                >
+  1485→                                  <Trash2 className="h-3 w-3" />
+  1486→                                </Button>
+  1487→                              </div>
+  1488→                            </CardContent>
+  1489→                          </Card>
+  1490→                        )
+  1491→                      })}
+  1492→                    </div>
+  1493→                  )}
+  1494→                </div>
+  1495→
+  1496→                {/* Expense Categories */}
+  1497→                <div className="space-y-4">
+  1498→                  <div className="flex items-center justify-between">
+  1499→                    <div className="flex items-center gap-2">
+  1500→                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-950">
+  1501→                        <TrendingDown className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+  1502→                      </div>
+  1503→                      <h3 className="text-base font-semibold">Expense Categories</h3>
+  1504→                    </div>
+  1505→                    <Dialog open={addExpenseCatOpen} onOpenChange={setAddExpenseCatOpen}>
+  1506→                      <DialogTrigger asChild>
+  1507→                        <Button variant="outline" size="sm" className="gap-1">
+  1508→                          <Plus className="h-3.5 w-3.5" />
+  1509→                          Add
+  1510→                        </Button>
+  1511→                      </DialogTrigger>
+  1512→                      <DialogContent className="sm:max-w-[400px]">
+  1513→                        <DialogHeader>
+  1514→                          <DialogTitle>Add Expense Category</DialogTitle>
+  1515→                          <DialogDescription>Create a new expense category.</DialogDescription>
+  1516→                        </DialogHeader>
+  1517→                        <div className="grid gap-4 py-4">
+  1518→                          <div className="grid gap-2">
+  1519→                            <Label htmlFor="exp-cat-name">Name</Label>
+  1520→                            <Input
+  1521→                              id="exp-cat-name"
+  1522→                              placeholder="e.g. Subscriptions"
+  1523→                              value={catName}
+  1524→                              onChange={(e) => setCatName(e.target.value)}
+  1525→                            />
+  1526→                          </div>
+  1527→                          <div className="grid gap-2">
+  1528→                            <Label>Icon</Label>
+  1529→                            <Select value={catIcon} onValueChange={setCatIcon}>
+  1530→                              <SelectTrigger>
+  1531→                                <SelectValue placeholder="Choose an icon" />
+  1532→                              </SelectTrigger>
+  1533→                              <SelectContent>
+  1534→                                {availableIcons.map((icon) => {
+  1535→                                  const IconComp = getIcon(icon)
+  1536→                                  return (
+  1537→                                    <SelectItem key={icon} value={icon}>
+  1538→                                      <span className="flex items-center gap-2">
+  1539→                                        <IconComp className="h-3.5 w-3.5" />
+  1540→                                        {icon}
+  1541→                                      </span>
+  1542→                                    </SelectItem>
+  1543→                                  )
+  1544→                                })}
+  1545→                              </SelectContent>
+  1546→                            </Select>
+  1547→                          </div>
+  1548→                        </div>
+  1549→                        <DialogFooter>
+  1550→                          <Button variant="outline" onClick={() => setAddExpenseCatOpen(false)}>Cancel</Button>
+  1551→                          <Button
+  1552→                            onClick={() => handleCreateCategory("EXPENSE")}
+  1553→                            disabled={submitting || !catName.trim()}
+  1554→                            className="bg-rose-600 hover:bg-rose-700"
+  1555→                          >
+  1556→                            {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1557→                            Add Category
+  1558→                          </Button>
+  1559→                        </DialogFooter>
+  1560→                      </DialogContent>
+  1561→                    </Dialog>
+  1562→                  </div>
+  1563→
+  1564→                  {expenseCategories.length === 0 ? (
+  1565→                    <Card className="border-dashed">
+  1566→                      <CardContent className="flex flex-col items-center py-8 text-center">
+  1567→                        <p className="text-sm text-muted-foreground">No expense categories yet.</p>
+  1568→                      </CardContent>
+  1569→                    </Card>
+  1570→                  ) : (
+  1571→                    <div className="space-y-2">
+  1572→                      {expenseCategories.map((cat) => {
+  1573→                        const IconComp = getIcon(cat.icon)
+  1574→                        return (
+  1575→                          <Card key={cat.id} className="hover:shadow-sm transition-shadow group">
+  1576→                            <CardContent className="flex items-center gap-3 p-3">
+  1577→                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-rose-100 dark:bg-rose-950">
+  1578→                                <IconComp className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+  1579→                              </div>
+  1580→                              <div className="flex-1 min-w-0">
+  1581→                                <span className="font-medium text-sm">{cat.name}</span>
+  1582→                                <p className="text-xs text-muted-foreground">
+  1583→                                  {cat.transactionCount} transaction{cat.transactionCount !== 1 ? "s" : ""}
+  1584→                                </p>
+  1585→                              </div>
+  1586→                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+  1587→                                <Button
+  1588→                                  variant="ghost"
+  1589→                                  size="icon"
+  1590→                                  className="h-7 w-7"
+  1591→                                  onClick={() => {
+  1592→                                    setEditingCategory(cat)
+  1593→                                    setEditCatName(cat.name)
+  1594→                                    setEditCatIcon(cat.icon || "")
+  1595→                                    setEditCategoryOpen(true)
+  1596→                                  }}
+  1597→                                >
+  1598→                                  <Pencil className="h-3 w-3" />
+  1599→                                </Button>
+  1600→                                <Button
+  1601→                                  variant="ghost"
+  1602→                                  size="icon"
+  1603→                                  className="h-7 w-7 text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950"
+  1604→                                  onClick={() => handleDeleteCategory(cat.id, cat.name)}
+  1605→                                >
+  1606→                                  <Trash2 className="h-3 w-3" />
+  1607→                                </Button>
+  1608→                              </div>
+  1609→                            </CardContent>
+  1610→                          </Card>
+  1611→                        )
+  1612→                      })}
+  1613→                    </div>
+  1614→                  )}
+  1615→                </div>
+  1616→              </div>
+  1617→            )}
+  1618→
+  1619→            {/* Edit Category Dialog */}
+  1620→            <Dialog open={editCategoryOpen} onOpenChange={setEditCategoryOpen}>
+  1621→              <DialogContent className="sm:max-w-[400px]">
+  1622→                <DialogHeader>
+  1623→                  <DialogTitle>Edit Category</DialogTitle>
+  1624→                  <DialogDescription>Update the name and icon of this category.</DialogDescription>
+  1625→                </DialogHeader>
+  1626→                <div className="grid gap-4 py-4">
+  1627→                  <div className="grid gap-2">
+  1628→                    <Label htmlFor="edit-cat-name">Name</Label>
+  1629→                    <Input
+  1630→                      id="edit-cat-name"
+  1631→                      value={editCatName}
+  1632→                      onChange={(e) => setEditCatName(e.target.value)}
+  1633→                    />
+  1634→                  </div>
+  1635→                  <div className="grid gap-2">
+  1636→                    <Label>Icon</Label>
+  1637→                    <Select value={editCatIcon} onValueChange={setEditCatIcon}>
+  1638→                      <SelectTrigger>
+  1639→                        <SelectValue placeholder="Choose an icon" />
+  1640→                      </SelectTrigger>
+  1641→                      <SelectContent>
+  1642→                        {availableIcons.map((icon) => {
+  1643→                          const IconComp = getIcon(icon)
+  1644→                          return (
+  1645→                            <SelectItem key={icon} value={icon}>
+  1646→                              <span className="flex items-center gap-2">
+  1647→                                <IconComp className="h-3.5 w-3.5" />
+  1648→                                {icon}
+  1649→                              </span>
+  1650→                            </SelectItem>
+  1651→                          )
+  1652→                        })}
+  1653→                      </SelectContent>
+  1654→                    </Select>
+  1655→                  </div>
+  1656→                </div>
+  1657→                <DialogFooter>
+  1658→                  <Button variant="outline" onClick={() => setEditCategoryOpen(false)}>Cancel</Button>
+  1659→                  <Button
+  1660→                    onClick={handleUpdateCategory}
+  1661→                    disabled={submitting || !editCatName.trim()}
+  1662→                    className="bg-emerald-600 hover:bg-emerald-700"
+  1663→                  >
+  1664→                    {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+  1665→                    Save Changes
+  1666→                  </Button>
+  1667→                </DialogFooter>
+  1668→              </DialogContent>
+  1669→            </Dialog>
+  1670→          </TabsContent>
+  1671→        </Tabs>
+  1672→    </div>
+  1673→  )
+  1674→}
+  1675→
+  1676→// ============================================================
+  1677→// MAIN PAGE COMPONENT (auth gate)
+  1678→// ============================================================
+  1679→export default function Home() {
+  1680→  const { data: session, status } = useSession()
+  1681→
+  1682→  // Loading state
+  1683→  if (status === "loading") {
+  1684→    return (
+  1685→      <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-emerald-50/50 via-background to-amber-50/30 dark:from-emerald-950/20 dark:via-background dark:to-amber-950/10">
+  1686→        <div className="flex flex-col items-center gap-4">
+  1687→          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-lg shadow-emerald-600/20">
+  1688→            <Wallet className="h-7 w-7 animate-pulse" />
+  1689→          </div>
+  1690→          <div className="flex items-center gap-2 text-muted-foreground">
+  1691→            <Loader2 className="h-4 w-4 animate-spin" />
+  1692→            <span className="text-sm">Loading...</span>
+  1693→          </div>
+  1694→        </div>
+  1695→      </div>
+  1696→    )
+  1697→  }
+  1698→
+  1699→  // Unauthenticated - show auth UI
+  1700→  if (status === "unauthenticated") {
+  1701→    return <AuthPage />
+  1702→  }
+  1703→
+  1704→  // Authenticated - show the finance tracker with user name in header
+  1705→  return (
+  1706→    <div className="min-h-screen flex flex-col bg-background">
+  1707→      {/* ===== HEADER WITH USER INFO ===== */}
+  1708→      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+  1709→        <div className="container mx-auto flex h-14 items-center justify-between px-4 sm:px-6">
+  1710→          <div className="flex items-center gap-2">
+  1711→            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white">
+  1712→              <Wallet className="h-4 w-4" />
+  1713→            </div>
+  1714→            <h1 className="text-lg font-bold tracking-tight">Finance Tracker</h1>
+  1715→          </div>
+  1716→          <div className="flex items-center gap-3">
+  1717→            <span className="text-sm text-muted-foreground hidden sm:inline">
+  1718→              Hello, <span className="font-medium text-foreground">{session?.user?.name || "User"}</span>
+  1719→            </span>
+  1720→            <Button
+  1721→              variant="outline"
+  1722→              size="sm"
+  1723→              className="gap-1.5"
+  1724→              onClick={() => signOut()}
+  1725→            >
+  1726→              <LogOut className="h-3.5 w-3.5" />
+  1727→              <span className="hidden sm:inline">Sign Out</span>
+  1728→            </Button>
+  1729→          </div>
+  1730→        </div>
+  1731→      </header>
+  1732→
+  1733→      {/* ===== MAIN CONTENT ===== */}
+  1734→      <main className="flex-1">
+  1735→        <FinanceTracker />
+  1736→      </main>
+  1737→
+  1738→      {/* ===== FOOTER ===== */}
+  1739→      <footer className="border-t mt-auto">
+  1740→        <div className="container mx-auto flex h-12 items-center justify-center px-4 sm:px-6">
+  1741→          <p className="text-xs text-muted-foreground">
+  1742→            &copy; {new Date().getFullYear()} Finance Tracker. All rights reserved.
+  1743→          </p>
+  1744→        </div>
+  1745→      </footer>
+  1746→    </div>
+  1747→  )
+  1748→}
+  1749→
