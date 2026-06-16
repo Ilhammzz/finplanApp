@@ -1,22 +1,35 @@
 import { PrismaClient } from '@prisma/client'
 import { PrismaLibSql } from '@prisma/adapter-libsql'
+import { createClient } from '@libsql/client'
 import path from 'path'
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
-// Membuat fallback absolute path yang valid untuk Windows (e.g., file:D:/RnD/fintrack/.../dev.db)
-const localDbPath = `file:${path.join(process.cwd(), 'prisma', 'dev.db')}`
-const databaseUrl = process.env.DATABASE_URL || localDbPath
+// Menentukan apakah aplikasi berjalan di Vercel (production) atau di laptop (development)
+const isProduction = process.env.NODE_ENV === 'production'
 
-// Prisma 7 Adapter LibSQL bisa menginisialisasi dirinya sendiri secara internal jika kita berikan objek url
+// Jalur cadangan untuk SQLite lokal saat kamu coding di laptop
+const localDbPath = `file:${path.join(process.cwd(), 'prisma', 'dev.db')}`
+
+// Inisialisasi LibSQL Client
+const libsqlClient = createClient({
+  // Di Vercel, jalurnya akan menggunakan libsql:// dari Turso. Di lokal, pakai file:prisma/dev.db
+  url: isProduction ? process.env.DATABASE_URL! : localDbPath,
+  
+  // Token wajib dimasukkan di sini agar koneksi cloud ke Turso diizinkan oleh Vercel
+  authToken: isProduction ? process.env.TURSO_AUTH_TOKEN : undefined,
+})
+
+// Bungkus dengan adapter Prisma 7
 const adapter = new PrismaLibSql({
-  url: databaseUrl,
+  url: isProduction ? process.env.DATABASE_URL! : localDbPath,
+  authToken: isProduction ? process.env.TURSO_AUTH_TOKEN : undefined,
 })
 
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient({ adapter })
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+if (!isProduction) globalForPrisma.prisma = db
